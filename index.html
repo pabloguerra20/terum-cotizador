@@ -34,6 +34,7 @@
       dias_entrega: parseInt(cotData.diasEntrega) || 0,
       validez: parseInt(cotData.validez) || 30,
       descuento_global: cotData.globalDisc || 0,
+      sin_iva: cotData.sinIva || false,
       notas: cotData.notas || '',
       rows: cotData.items || [],
       complementos: cotData.complementos || [],
@@ -954,7 +955,16 @@
             <span>Subtotal</span>
             <span id="subtotal" class="fw-bold">$0.00</span>
           </div>
-          <div class="totals-row iva">
+          <div class="totals-row" id="ivaToggleRow">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <label class="toggle-switch">
+                <input type="checkbox" id="ivaToggle" checked onchange="recalc()">
+                <span class="toggle-slider"></span>
+              </label>
+              <span style="font-size:13px;color:#666;">Incluir IVA (16%)</span>
+            </div>
+          </div>
+          <div class="totals-row iva" id="ivaRow">
             <span>IVA (16%)</span>
             <span id="iva">$0.00</span>
           </div>
@@ -2678,6 +2688,10 @@ async function initForm() {
   document.getElementById('globalDiscInputRow').style.display = 'none';
   document.getElementById('cotStatus').value = 'Pendiente';
   document.getElementById('cotTipoCliente').value = '';
+  const ivaTogEl = document.getElementById('ivaToggle');
+  if (ivaTogEl) { ivaTogEl.checked = true; }
+  const ivaRowEl = document.getElementById('ivaRow');
+  if (ivaRowEl) ivaRowEl.style.display = '';
   rows = [];
   _rowIdCtr = 1;
   editingId = null;
@@ -2962,7 +2976,8 @@ function recalc() {
   const gd = toggleOn ? (parseFloat(document.getElementById('globalDisc').value) || 0) : 0;
   const discAmt = subtotalBruto * gd / 100;
   const subtotal = subtotalBruto - discAmt;
-  const iva = subtotal * 0.16;
+  const ivaOn = document.getElementById('ivaToggle')?.checked !== false;
+  const iva = ivaOn ? subtotal * 0.16 : 0;
   const total = subtotal + iva;
 
   document.getElementById('sumPlacas').textContent = totalPl;
@@ -2978,6 +2993,9 @@ function recalc() {
   const toggleOn2 = document.getElementById('globalDiscToggle')?.checked;
   const subtotalBrutoRow = document.getElementById('subtotalBruto')?.closest('.totals-row');
   if (subtotalBrutoRow) subtotalBrutoRow.style.display = toggleOn2 ? '' : 'none';
+  // Show/hide IVA row
+  const ivaRowEl = document.getElementById('ivaRow');
+  if (ivaRowEl) ivaRowEl.style.display = ivaOn ? '' : 'none';
   document.getElementById('subtotal').textContent = fmx(subtotal);
   document.getElementById('iva').textContent = fmx(iva);
   document.getElementById('total').textContent = fmx(total);
@@ -3008,7 +3026,8 @@ function buildCotData() {
   });
   const discAmt = subtotalBruto * gd / 100;
   const subtotal = subtotalBruto - discAmt;
-  const iva = subtotal * 0.16;
+  const ivaOn = document.getElementById('ivaToggle')?.checked !== false;
+  const iva = ivaOn ? subtotal * 0.16 : 0;
   const total = subtotal + iva;
   return {
     num: document.getElementById('cotNum').value,
@@ -3022,7 +3041,8 @@ function buildCotData() {
     status: document.getElementById('cotStatus').value,
     tipoCliente: document.getElementById('cotTipoCliente').value,
     globalDisc: gd,
-    items, subtotalBruto, discAmt, subtotal, iva, total, totalUnidades
+    items, subtotalBruto, discAmt, subtotal, iva, total, totalUnidades,
+    sinIva: !ivaOn
   };
 }
 
@@ -3068,6 +3088,10 @@ async function loadCot(num) {
   }
   document.getElementById('cotStatus').value = cot.status || 'Pendiente';
   document.getElementById('cotTipoCliente').value = cot.tipoCliente || cot.tipo_cliente || '';
+  const ivaToggleEl = document.getElementById('ivaToggle');
+  if (ivaToggleEl) ivaToggleEl.checked = !(cot.sinIva || cot.sin_iva);
+  const ivaRowEl = document.getElementById('ivaRow');
+  if (ivaRowEl) ivaRowEl.style.display = (cot.sinIva || cot.sin_iva) ? 'none' : '';
   _rowIdCtr = 1;
   const items = cot.items || cot.rows || [];
   rows = items.map(item => ({
@@ -3083,12 +3107,53 @@ async function loadCot(num) {
 }
 
 async function deleteCot(num) {
-  if (!confirm(`¿Eliminar cotización ${num}?`)) return;
+  const h = await getHistory();
+  const cot = h.find(c => c.num === num);
+  if (!cot) return;
+
+  const status = cot.status || 'Pendiente';
+  const items = (cot.items || cot.rows || []).filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS');
+  const cliente = cot.cliente || '';
+
+  const tieneApartado = status === 'Cerrada';
+  const tieneSalida   = status === 'Entregada';
+
+  if ((tieneApartado || tieneSalida) && items.length > 0) {
+    const accion = tieneApartado ? 'apartado' : 'salida registrada';
+    const resumen = items.map(i => '\u2022 ' + i.product.nombre + ' \u2014 ' + i.qty + ' placas').join('\n');
+    const msg = '\u26a0\ufe0f Esta cotiz\u00f3n tiene ' + accion + ' en inventario.\n\n' +
+      resumen + '\n\n' +
+      '\u00bfDeseas revertir el inventario (devolver las placas) antes de eliminar?\n\n' +
+      '[Aceptar] = Revertir y eliminar\n[Cancelar] = No hacer nada';
+
+    if (!confirm(msg)) return;
+
+    if (tieneApartado) {
+      await invLiberarApartado(num, cot.items || cot.rows || [], cliente);
+      notify('Apartado liberado para ' + num + ' \u2713', 'success');
+    } else if (tieneSalida) {
+      for (const item of items) {
+        const sku = item.product.sku;
+        const placas = item.qty;
+        const m2 = placas * (item.m2 || 0);
+        await invInsertMovimiento({
+          sku, tipo: 'entrada', placas, m2,
+          referencia: num, cliente,
+          notas: 'Reversi\u00f3n autom\u00e1tica \u2014 cotizaci\u00f3n ' + num + ' eliminada',
+          fecha: today()
+        });
+        await invUpdateStock(sku, placas, 0, 0);
+      }
+      notify('Stock revertido para ' + num + ' \u2713', 'success');
+    }
+  } else {
+    if (!confirm('\u00bfEliminar cotizaci\u00f3n ' + num + '?')) return;
+  }
+
   await deleteCotFromDB(num);
   renderHistorial();
-  notify('Cotización eliminada');
+  notify('Cotizaci\u00f3n eliminada');
 }
-
 async function newCot() {
   if (!confirm('¿Crear nueva cotización? Se perderán los cambios no guardados.')) return;
   await initForm();
@@ -3521,7 +3586,7 @@ function exportPDFFromData(data) {
     ...(data.globalDisc > 0 ? [['SUBTOTAL :', fmx(data.subtotalBruto)]] : []),
     ...(data.globalDisc > 0 ? [['DESCUENTO (' + data.globalDisc + '%) :', '-' + fmx(data.discAmt)]] : []),
     ['SUBTOTAL NETO :', fmx(data.subtotal)],
-    ['IVA (16%) :', fmx(data.iva)]
+    ...(!data.sinIva ? [['IVA (16%) :', fmx(data.iva)]] : [])
   ];
   doc.setFontSize(8.5);
   let fy = y + 6;
@@ -5091,10 +5156,27 @@ async function updateStatusInline(num, val, event) {
     else notify('Status actualizado pero algunos SKUs no están en inventario', 'warning');
 
   } else if (necesitaLiberar) {
-    if (confirm(`¿Cambiar ${num} a Rechazada?\nSe liberará automáticamente el inventario apartado.`)) {
+    const itemsConStock = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS');
+    const tieneApartadoPrevio = ['Cerrada'].includes(prevStatus);
+    const resumen = itemsConStock.length
+      ? itemsConStock.map(i => '\u2022 ' + i.product.nombre + ' \u2014 ' + i.qty + ' placas').join('\n')
+      : '(sin productos con inventario)';
+
+    let msg;
+    if (tieneApartadoPrevio && itemsConStock.length > 0) {
+      msg = '\u274c Rechazar cotizaci\u00f3n ' + num + '\n\nSe liberar\u00e1 el inventario apartado:\n' + resumen + '\n\n\u00bfConfirmar?';
+    } else {
+      msg = '\u274c Rechazar cotizaci\u00f3n ' + num + '\n\nNo hay inventario apartado que revertir.\n\n\u00bfConfirmar?';
+    }
+
+    if (confirm(msg)) {
       await updateStatusInDB(num, val);
-      await invLiberarApartado(num, items, cliente);
-      notify(`Apartado liberado para ${num} ✓`, 'success');
+      if (tieneApartadoPrevio && itemsConStock.length > 0) {
+        await invLiberarApartado(num, items, cliente);
+        notify('Cotizaci\u00f3n rechazada \u2014 apartado liberado para ' + num + ' \u2713', 'success');
+      } else {
+        notify('Cotizaci\u00f3n ' + num + ' marcada como Rechazada', 'success');
+      }
     } else {
       if (prevSelect) prevSelect.value = prevStatus;
       return;
