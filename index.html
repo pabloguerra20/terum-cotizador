@@ -459,6 +459,7 @@
   .status-EnRevision { background:#f3e8ff; color:#6b21a8; border:1px solid #c084fc; }
   .status-Cerrada    { background:#dcfce7; color:#15803d; border:1px solid #86efac; }
   .status-Rechazada  { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+  .status-Entregada  { background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
   .status-select { border: 1px solid #e0e0de; border-radius: 6px; padding: 7px 10px; font-size: 13px; background: #fafaf9; cursor: pointer; width: 100%; color: #1a1a1a; font-family: inherit; }
   .status-select:focus { outline: none; border-color: #1a1a1a; }
 
@@ -713,7 +714,7 @@
 
     <!-- OPERACIONES (placeholder) -->
     <div class="sidebar-section-label" style="margin-top:6px;">Operaciones</div>
-    <button class="nav-tab placeholder" title="Próximamente">
+    <button class="nav-tab" onclick="switchView('inventario')" title="Inventario">
       <span class="nav-icon">📦</span>
       <span class="nav-label">Inventario</span>
     </button>
@@ -799,6 +800,7 @@
               <option value="Enviada">📤 Enviada</option>
               <option value="EnRevision">🔍 En Revisión</option>
               <option value="Cerrada">✅ Cerrada</option>
+              <option value="Entregada">🚚 Entregada</option>
               <option value="Rechazada">❌ Rechazada</option>
             </select>
           </div>
@@ -1537,6 +1539,7 @@
             <option value="Enviada">Enviada</option>
             <option value="EnRevision">En Revisión</option>
             <option value="Cerrada">Cerrada</option>
+            <option value="Entregada">Entregada</option>
             <option value="Rechazada">Rechazada</option>
           </select>
           <button class="btn btn-secondary btn-sm" onclick="renderDashboard()" style="margin-left:auto;">↻ Actualizar</button>
@@ -1722,7 +1725,160 @@
         </div>
 
       </div><!-- /#conv-editor-panel -->
-    </div><!-- /#view-convenio -->
+</div><!-- /#view-convenio -->
+
+    <!-- INVENTARIO VIEW -->
+    <div id="view-inventario" class="view">
+      <div id="inv-main-panel">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+          <input type="text" id="inv-search" placeholder="🔍 Buscar SKU, nombre, categoría..." oninput="invRender()" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;min-width:240px;flex:1;">
+          <select id="inv-filter-cat" onchange="invRender()" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;">
+            <option value="">Todas las categorías</option>
+            <option value="SINTERED STONE">Sintered Stone</option>
+            <option value="PORCELAIN">Porcelain</option>
+            <option value="ESTERNI">Esterni</option>
+            <option value="SEMPLICE">Semplice</option>
+            <option value="COMPLEMENTOS">Complementos</option>
+          </select>
+          <select id="inv-filter-status" onchange="invRender()" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;">
+            <option value="">Todos</option>
+            <option value="ok">Stock OK</option>
+            <option value="low">Stock bajo</option>
+            <option value="out">Sin stock</option>
+          </select>
+        </div>
+        <div id="inv-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;"></div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f3;border-bottom:2px solid #e0e0de;">
+                <th style="padding:10px 12px;text-align:left;font-weight:600;color:#555;">SKU / Producto</th>
+                <th style="padding:10px 12px;text-align:left;font-weight:600;color:#555;">Categoría</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">En Bodega</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Apartado</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Disponible</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">En Tránsito</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">M² Disp.</th>
+                <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Estado</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="inv-tbody"></tbody>
+          </table>
+        </div>
+        <div id="inv-empty" style="display:none;padding:48px;text-align:center;color:#aaa;">
+          <div style="font-size:36px;margin-bottom:12px;">📦</div>
+          <div style="font-size:15px;font-weight:500;margin-bottom:8px;">No hay productos en inventario</div>
+          <div style="font-size:13px;margin-bottom:20px;">Agrega tu primer SKU con el botón superior</div>
+        </div>
+      </div>
+
+      <!-- Movimiento panel -->
+      <div id="inv-mov-panel" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+          <button class="btn btn-outline btn-sm" onclick="invCloseMovPanel()">← Regresar</button>
+          <h3 id="inv-mov-title" style="margin:0;font-size:16px;font-weight:600;"></h3>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:640px;">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">TIPO DE MOVIMIENTO</label>
+            <select id="inv-mov-tipo" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+              <option value="entrada">📥 Entrada — llegada a bodega</option>
+              <option value="salida">📤 Salida — entrega a cliente</option>
+              <option value="apartado">🔒 Apartar — reservar para cliente</option>
+              <option value="liberado">🔓 Liberar apartado</option>
+              <option value="transito_entrada">🚢 Registrar en tránsito</option>
+              <option value="transito_llegada">🏭 Tránsito llegó a bodega</option>
+              <option value="ajuste">⚖️ Ajuste de inventario</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">PLACAS</label>
+            <input type="number" id="inv-mov-placas" min="0.01" step="0.01" placeholder="0" oninput="invMovCalcM2()" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">M² (calculado)</label>
+            <input type="number" id="inv-mov-m2" readonly placeholder="—" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;background:#f9f9f7;color:#888;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">FECHA</label>
+            <input type="date" id="inv-mov-fecha" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">REFERENCIA (OC, COT, contenedor…)</label>
+            <input type="text" id="inv-mov-ref" placeholder="Ej. OC-2026-001" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">CLIENTE (opcional)</label>
+            <input type="text" id="inv-mov-cliente" placeholder="Nombre del cliente" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div style="grid-column:1/-1;">
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">NOTAS</label>
+            <textarea id="inv-mov-notas" rows="2" placeholder="Observaciones opcionales" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;resize:vertical;"></textarea>
+          </div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px;">
+          <button class="btn btn-primary" onclick="invGuardarMovimiento()">💾 Registrar movimiento</button>
+          <button class="btn btn-outline" onclick="invCloseMovPanel()">Cancelar</button>
+        </div>
+        <div style="margin-top:32px;">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">Historial de movimientos</h4>
+          <div id="inv-mov-historial"></div>
+        </div>
+      </div>
+
+      <!-- Nuevo SKU panel -->
+      <div id="inv-sku-panel" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+          <button class="btn btn-outline btn-sm" onclick="invCloseSKUPanel()">← Regresar</button>
+          <h3 id="inv-sku-title" style="margin:0;font-size:16px;font-weight:600;">Nuevo SKU en Inventario</h3>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:640px;">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">SKU *</label>
+            <input type="text" id="inv-sku-sku" placeholder="Ej. KT-320160-12" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">NOMBRE *</label>
+            <input type="text" id="inv-sku-nombre" placeholder="Nombre del producto" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">CATEGORÍA</label>
+            <select id="inv-sku-cat" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+              <option value="SINTERED STONE">Sintered Stone</option>
+              <option value="PORCELAIN">Porcelain</option>
+              <option value="ESTERNI">Esterni</option>
+              <option value="SEMPLICE">Semplice</option>
+              <option value="COMPLEMENTOS">Complementos</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">FORMATO</label>
+            <input type="text" id="inv-sku-formato" placeholder="Ej. 320 x 160 x 12" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">M² POR PLACA</label>
+            <input type="number" id="inv-sku-m2" min="0" step="0.001" placeholder="0.000" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">STOCK MÍNIMO (placas)</label>
+            <input type="number" id="inv-sku-minimo" min="0" step="1" placeholder="0" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">UBICACIÓN EN BODEGA</label>
+            <input type="text" id="inv-sku-ubicacion" placeholder="Ej. Pasillo A, Estante 3" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">NOTAS</label>
+            <input type="text" id="inv-sku-notas" placeholder="Observaciones opcionales" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px;">
+          <button class="btn btn-primary" onclick="invGuardarSKU()">💾 Guardar SKU</button>
+          <button class="btn btn-outline" onclick="invCloseSKUPanel()">Cancelar</button>
+        </div>
+      </div>
+    </div><!-- /#view-inventario -->
 
   </div><!-- /#content-area -->
 </div><!-- /#app-shell -->
@@ -2552,14 +2708,14 @@ async function loadCot(num) {
   if (!cot) return;
   editingId = cot.num;
   document.getElementById('cotNum').value = cot.num;
-  document.getElementById('cotFecha').value = cot.fecha;
-  document.getElementById('cotVence').value = cot.vence;
-  document.getElementById('cotCliente').value = cot.cliente;
-  document.getElementById('cotProyecto').value = cot.proyecto;
-  document.getElementById('cotVendedor').value = cot.vendedor;
+  document.getElementById('cotFecha').value = cot.fecha || '';
+  document.getElementById('cotVence').value = cot.vence || cot.validez || '';
+  document.getElementById('cotCliente').value = cot.cliente || '';
+  document.getElementById('cotProyecto').value = cot.proyecto || '';
+  document.getElementById('cotVendedor').value = cot.vendedor || '';
   document.getElementById('cotLugar').value = cot.lugar || '';
-  document.getElementById('cotPago').value = cot.pago || '';
-  const savedDisc = cot.globalDisc || 0;
+  document.getElementById('cotPago').value = cot.pago || cot.condiciones_pago || '';
+  const savedDisc = cot.globalDisc ?? cot.descuento_global ?? 0;
   document.getElementById('globalDisc').value = savedDisc;
   const tog = document.getElementById('globalDiscToggle');
   const inputRow = document.getElementById('globalDiscInputRow');
@@ -2568,9 +2724,10 @@ async function loadCot(num) {
     inputRow.style.display = savedDisc > 0 ? '' : 'none';
   }
   document.getElementById('cotStatus').value = cot.status || 'Pendiente';
-  document.getElementById('cotTipoCliente').value = cot.tipoCliente || '';
+  document.getElementById('cotTipoCliente').value = cot.tipoCliente || cot.tipo_cliente || '';
   _rowIdCtr = 1;
-  rows = cot.items.map(item => ({
+  const items = cot.items || cot.rows || [];
+  rows = items.map(item => ({
     id: _rowIdCtr++,
     product: item.product,
     qty: item.qty,
@@ -2602,6 +2759,7 @@ const STATUS_META = {
   Enviada:    { label: '📤 Enviada',      cls: 'status-Enviada',    color: '#1e40af' },
   EnRevision: { label: '🔍 En Revisión', cls: 'status-EnRevision', color: '#5b21b6' },
   Cerrada:    { label: '✅ Cerrada',      cls: 'status-Cerrada',    color: '#14532d' },
+  Entregada:  { label: '🚚 Entregada',   cls: 'status-Entregada',  color: '#065f46' },
   Rechazada:  { label: '❌ Rechazada',   cls: 'status-Rechazada',  color: '#991b1b' },
 };
 function statusBadge(s) {
@@ -2622,10 +2780,7 @@ function tipoBadge(t) {
   const m = TIPO_META[t];
   return `<span class="tc-badge ${m.cls}">${m.icon} ${m.label}</span>`;
 }
-async function updateStatusInline(num, val) {
-  await updateStatusInDB(num, val);
-  renderHistorial();
-}
+// updateStatusInline → defined below with inventory connection logic
 
 // =====================================================================
 // HISTORIAL VIEW
@@ -2715,13 +2870,14 @@ async function renderHistorial() {
             <td style="padding:9px 12px;color:#666;">${c.proyecto || '—'}</td>
             <td style="padding:9px 12px;">${c.vendedor || '—'}</td>
             <td style="padding:9px 12px;">
-              <select onchange="updateStatusInline('${c.num}',this.value)"
+              <select onchange="updateStatusInline('${c.num}',this.value,event)"
                 style="border:none;background:transparent;font-size:12px;font-weight:700;cursor:pointer;padding:3px 4px;border-radius:4px;"
                 class="${STATUS_META[st]?.cls || ''}">
                 <option value="Pendiente"  ${st==='Pendiente' ?'selected':''}>⏳ Pendiente</option>
                 <option value="Enviada"    ${st==='Enviada'   ?'selected':''}>📤 Enviada</option>
                 <option value="EnRevision" ${st==='EnRevision'?'selected':''}>🔍 En Revisión</option>
                 <option value="Cerrada"    ${st==='Cerrada'   ?'selected':''}>✅ Cerrada</option>
+                <option value="Entregada"  ${st==='Entregada' ?'selected':''}>🚚 Entregada</option>
                 <option value="Rechazada"  ${st==='Rechazada' ?'selected':''}>❌ Rechazada</option>
               </select>
             </td>
@@ -2742,7 +2898,18 @@ async function renderHistorial() {
 
 async function getHistById(num) {
   const h = await getHistory();
-  return h.find(c => c.num === num);
+  const cot = h.find(c => c.num === num);
+  if (!cot) return null;
+  // Normalize Supabase field names to what exportPDFFromData expects
+  return {
+    ...cot,
+    items:       cot.items       || cot.rows              || [],
+    pago:        cot.pago        || cot.condiciones_pago  || '',
+    globalDisc:  cot.globalDisc  ?? cot.descuento_global  ?? 0,
+    tipoCliente: cot.tipoCliente || cot.tipo_cliente      || '',
+    lugar:       cot.lugar       || '',
+    vence:       cot.vence       || '',
+  };
 }
 
 // =====================================================================
@@ -2753,7 +2920,7 @@ async function switchView(v) {
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
   document.getElementById('view-' + v).classList.add('active');
   // Sidebar order: nueva=0, historial=1, catalogo=2, listaprecios=3, convenio=4, dashboard=5
-  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5 };
+  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5, inventario: 6 };
   const tabs = document.querySelectorAll('.nav-tab');
   if (tabs[tabIdx[v] ?? 0]) tabs[tabIdx[v] ?? 0].classList.add('active');
   // Update topbar
@@ -2763,7 +2930,8 @@ async function switchView(v) {
     catalogo: 'Catálogo de Productos',
     listaprecios: 'Lista de Precios',
     convenio: 'Precios Convenio',
-    dashboard: 'Dashboard Comercial'
+    dashboard: 'Dashboard Comercial',
+    inventario: 'Gestión de Inventario'
   };
   const actions = {
     nueva: '<button class="btn btn-success btn-sm" onclick="saveCot()">💾 Guardar</button><button class="btn btn-primary btn-sm" onclick="exportPDF()">📄 PDF</button><button class="btn btn-outline btn-sm" onclick="newCot()">🆕 Nueva</button>',
@@ -2771,7 +2939,8 @@ async function switchView(v) {
     catalogo: '',
     listaprecios: '',
     convenio: '<button class="btn btn-primary btn-sm" onclick="convenioNuevo()">🤝 Nueva Lista</button>',
-    dashboard: '<button class="btn btn-secondary btn-sm" onclick="renderDashboard()">↻ Actualizar</button>'
+    dashboard: '<button class="btn btn-secondary btn-sm" onclick="renderDashboard()">↻ Actualizar</button>',
+    inventario: '<button class="btn btn-primary btn-sm" onclick="invNuevoSKU()">+ Nuevo SKU</button><button class="btn btn-secondary btn-sm" onclick="invRender()">↻ Actualizar</button>'
   };
   const titleEl = document.getElementById('topbar-title');
   const actionsEl = document.getElementById('topbar-actions');
@@ -2781,6 +2950,7 @@ async function switchView(v) {
   if (v === 'dashboard') renderDashboard();
   if (v === 'catalogo') renderCatalog();
   if (v === 'convenio') renderConvenioList();
+  if (v === 'inventario') invRender();
 }
 
 
@@ -4075,6 +4245,502 @@ function convenioPDFFromData(data) {
   doc.text('CONTACTO@GRUPOTERUM.COM', W - MR, H - 5, { align:'right' });
 
   doc.save('CONVENIO_' + (data.cliente || 'TERUM').replace(/\s+/g,'-').toUpperCase() + '_' + (data.fecha||today()) + '.pdf');
+}
+
+
+
+// =====================================================================
+// INVENTARIO ↔ COTIZACIONES — Conexión automática
+// =====================================================================
+
+// Verificar disponibilidad de todos los SKUs de una cotización
+async function invCheckDisponibilidad(items) {
+  const skus = [...new Set(items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS').map(i => i.product.sku))];
+  if (!skus.length) return { ok: true, items: [] };
+  const { data } = await _sb.from('inventario').select('sku,nombre,stock_placas,apartado_placas').in('sku', skus);
+  const inv = {};
+  (data || []).forEach(r => inv[r.sku] = r);
+  const result = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS').map(i => {
+    const p = i.product;
+    const rec = inv[p.sku];
+    const disp = rec ? Math.max(0, (rec.stock_placas||0) - (rec.apartado_placas||0)) : null;
+    return {
+      sku: p.sku,
+      nombre: p.nombre || p.sku,
+      qty: i.qty,
+      disp,
+      enInventario: !!rec,
+      suficiente: rec ? disp >= i.qty : null
+    };
+  });
+  const ok = result.every(r => r.suficiente !== false);
+  return { ok, items: result };
+}
+
+// Apartar inventario para todos los SKUs de una cotización (cuando → Cerrada)
+async function invApartarCotizacion(cotNum, items, cliente) {
+  const productos = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS');
+  let errores = 0;
+  for (const item of productos) {
+    const sku = item.product.sku;
+    const placas = item.qty;
+    const m2 = placas * (item.m2 || 0);
+    const movOk = await invInsertMovimiento({
+      sku, tipo: 'apartado', placas, m2,
+      referencia: cotNum, cliente,
+      notas: 'Apartado automático — cotización cerrada',
+      fecha: today()
+    });
+    const stockOk = await invUpdateStock(sku, 0, placas, 0);
+    if (!movOk || !stockOk) errores++;
+  }
+  return errores === 0;
+}
+
+// Liberar apartado cuando cotización → Rechazada o cancelada
+async function invLiberarApartado(cotNum, items, cliente) {
+  const productos = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS');
+  for (const item of productos) {
+    const sku = item.product.sku;
+    const placas = item.qty;
+    const m2 = placas * (item.m2 || 0);
+    await invInsertMovimiento({
+      sku, tipo: 'liberado', placas, m2,
+      referencia: cotNum, cliente,
+      notas: 'Liberado automático — cotización rechazada/cancelada',
+      fecha: today()
+    });
+    await invUpdateStock(sku, 0, -placas, 0);
+  }
+}
+
+// Registrar salida cuando cotización → Entregada
+async function invRegistrarSalida(cotNum, items, cliente) {
+  const productos = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS');
+  for (const item of productos) {
+    const sku = item.product.sku;
+    const placas = item.qty;
+    const m2 = placas * (item.m2 || 0);
+    await invInsertMovimiento({
+      sku, tipo: 'salida', placas, m2,
+      referencia: cotNum, cliente,
+      notas: 'Salida automática — entrega registrada',
+      fecha: today()
+    });
+    // Salida: baja stock y baja apartado (ya estaba apartado)
+    await invUpdateStock(sku, -placas, -placas, 0);
+  }
+}
+
+// Mostrar modal de confirmación antes de cambiar status con impacto en inventario
+async function updateStatusInline(num, val, event) {
+  const prevSelect = event?.target;
+  const h = await getHistory();
+  const cot = h.find(c => c.num === num);
+  if (!cot) { await updateStatusInDB(num, val); renderHistorial(); return; }
+
+  const prevStatus = cot.status || 'Pendiente';
+  const items = cot.items || cot.rows || [];
+  const cliente = cot.cliente || '';
+
+  // Determinar si el cambio de status tiene impacto en inventario
+  const apartarStatuses   = ['Cerrada'];
+  const liberarStatuses   = ['Rechazada'];
+  const entregaStatuses   = ['Entregada'];
+  const necesitaApartar   = apartarStatuses.includes(val) && !apartarStatuses.includes(prevStatus);
+  const necesitaLiberar   = liberarStatuses.includes(val) && apartarStatuses.includes(prevStatus);
+  const necesitaEntrega   = entregaStatuses.includes(val);
+
+  if (necesitaApartar) {
+    // Verificar disponibilidad primero
+    const check = await invCheckDisponibilidad(items);
+    const resumen = check.items.map(i => {
+      const icon = i.suficiente === null ? '⚠️' : i.suficiente ? '✅' : '🔴';
+      const dispTxt = i.disp === null ? 'sin registro en inventario' : i.disp.toFixed(1) + ' pl disponibles';
+      return `${icon} ${i.nombre} — necesita ${i.qty} pl · ${dispTxt}`;
+    }).join('\n');
+
+    const faltantes = check.items.filter(i => i.suficiente === false).length;
+    const sinRegistro = check.items.filter(i => !i.enInventario).length;
+
+    let msg = `¿Apartar inventario para ${num}?\n\n${resumen}`;
+    if (faltantes > 0) msg += `\n\n⚠️ ${faltantes} producto(s) sin stock suficiente.`;
+    if (sinRegistro > 0) msg += `\n\n📦 ${sinRegistro} producto(s) no están en inventario todavía.`;
+    msg += '\n\n¿Confirmar el apartado?';
+
+    if (!confirm(msg)) {
+      // Revertir el select al valor anterior
+      if (prevSelect) prevSelect.value = prevStatus;
+      return;
+    }
+    await updateStatusInDB(num, val);
+    const ok = await invApartarCotizacion(num, items, cliente);
+    if (ok) notify(`Inventario apartado para ${num} ✓`, 'success');
+    else notify('Status actualizado pero algunos SKUs no están en inventario', 'warning');
+
+  } else if (necesitaLiberar) {
+    if (confirm(`¿Cambiar ${num} a Rechazada?\nSe liberará automáticamente el inventario apartado.`)) {
+      await updateStatusInDB(num, val);
+      await invLiberarApartado(num, items, cliente);
+      notify(`Apartado liberado para ${num} ✓`, 'success');
+    } else {
+      if (prevSelect) prevSelect.value = prevStatus;
+      return;
+    }
+
+  } else if (necesitaEntrega) {
+    if (confirm(`¿Registrar entrega de ${num}?\nSe generará la salida de inventario automáticamente.`)) {
+      await updateStatusInDB(num, val);
+      await invRegistrarSalida(num, items, cliente);
+      notify(`Salida de inventario registrada para ${num} ✓`, 'success');
+    } else {
+      if (prevSelect) prevSelect.value = prevStatus;
+      return;
+    }
+
+  } else {
+    await updateStatusInDB(num, val);
+  }
+
+  renderHistorial();
+}
+
+// Badge de disponibilidad en historial
+async function invBadgeCotizacion(items) {
+  if (!items || !items.length) return '';
+  const skus = items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS').map(i => i.product?.sku).filter(Boolean);
+  if (!skus.length) return '';
+  const { data } = await _sb.from('inventario').select('sku,stock_placas,apartado_placas').in('sku', [...new Set(skus)]);
+  const inv = {};
+  (data || []).forEach(r => inv[r.sku] = r);
+  let ok = 0, bajo = 0, sin = 0;
+  items.filter(i => i.product && i.product.categoria !== 'COMPLEMENTOS').forEach(i => {
+    const rec = inv[i.product?.sku];
+    if (!rec) { sin++; return; }
+    const disp = Math.max(0, (rec.stock_placas||0) - (rec.apartado_placas||0));
+    if (disp >= i.qty) ok++;
+    else if (disp > 0) bajo++;
+    else sin++;
+  });
+  if (sin > 0 || bajo > 0) return `<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#fef9c3;color:#854d0e;margin-left:6px;">⚠️ Stock</span>`;
+  return `<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#dcfce7;color:#166534;margin-left:6px;">✅ Stock</span>`;
+}
+
+// =====================================================================
+// INVENTARIO — Supabase helpers
+// =====================================================================
+let _invData = [];
+let _invMovSku = null;
+
+async function invLoad() {
+  const { data, error } = await _sb.from('inventario').select('*').order('categoria').order('nombre');
+  if (error) { console.error('invLoad:', error); return []; }
+  return data || [];
+}
+
+async function invLoadMovimientos(sku) {
+  const { data, error } = await _sb.from('inventario_movimientos').select('*').eq('sku', sku).order('created_at', { ascending: false });
+  if (error) { console.error('invLoadMovimientos:', error); return []; }
+  return data || [];
+}
+
+async function invUpsertSKU(row) {
+  const { error } = await _sb.from('inventario').upsert(row, { onConflict: 'sku' });
+  return !error;
+}
+
+async function invInsertMovimiento(mov) {
+  const { error } = await _sb.from('inventario_movimientos').insert(mov);
+  return !error;
+}
+
+async function invUpdateStock(sku, delta_stock, delta_apartado, delta_transito) {
+  // Read current then update atomically
+  const { data } = await _sb.from('inventario').select('stock_placas,apartado_placas,transito_placas').eq('sku', sku).single();
+  if (!data) return false;
+  const newStock    = Math.max(0, (data.stock_placas    || 0) + delta_stock);
+  const newApartado = Math.max(0, (data.apartado_placas || 0) + delta_apartado);
+  const newTransito = Math.max(0, (data.transito_placas || 0) + delta_transito);
+  const { error } = await _sb.from('inventario').update({
+    stock_placas:    newStock,
+    apartado_placas: newApartado,
+    transito_placas: newTransito,
+    updated_at: new Date().toISOString()
+  }).eq('sku', sku);
+  return !error;
+}
+
+// ── Render main table ─────────────────────────────────────────────────────────
+async function invRender() {
+  _invData = await invLoad();
+  const q     = (document.getElementById('inv-search')?.value || '').toLowerCase();
+  const fCat  = document.getElementById('inv-filter-cat')?.value  || '';
+  const fStat = document.getElementById('inv-filter-status')?.value || '';
+  const tbody = document.getElementById('inv-tbody');
+  const empty = document.getElementById('inv-empty');
+  if (!tbody) return;
+
+  let rows = _invData.filter(p => {
+    if (fCat  && p.categoria !== fCat) return false;
+    const disp = (p.stock_placas || 0) - (p.apartado_placas || 0);
+    if (fStat === 'ok'  && !(disp > (p.stock_minimo_placas || 0))) return false;
+    if (fStat === 'low' && !(disp <= (p.stock_minimo_placas || 0) && disp > 0)) return false;
+    if (fStat === 'out' && disp > 0) return false;
+    if (q && !((p.sku||'').toLowerCase().includes(q) || (p.nombre||'').toLowerCase().includes(q) || (p.categoria||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  // KPIs
+  const totalSKUs    = _invData.length;
+  const totalDisp    = _invData.reduce((s,p) => s + Math.max(0,(p.stock_placas||0)-(p.apartado_placas||0)), 0);
+  const totalTransito = _invData.reduce((s,p) => s + (p.transito_placas||0), 0);
+  const stockBajo    = _invData.filter(p => {
+    const d = (p.stock_placas||0)-(p.apartado_placas||0);
+    return d <= (p.stock_minimo_placas||0) && d >= 0;
+  }).length;
+  document.getElementById('inv-kpis').innerHTML = `
+    <div class="kpi-card kpi-blue"><div class="kpi-label">SKUs activos</div><div class="kpi-value">${totalSKUs}</div></div>
+    <div class="kpi-card kpi-green"><div class="kpi-label">Placas disponibles</div><div class="kpi-value">${totalDisp.toFixed(1)}</div></div>
+    <div class="kpi-card" style="background:#f0fdf4;border:1px solid #bbf7d0;"><div class="kpi-label" style="color:#166534;">En tránsito</div><div class="kpi-value" style="color:#166534;">${totalTransito.toFixed(1)}</div></div>
+    <div class="kpi-card" style="background:${stockBajo>0?'#fef9c3':'#f5f5f3'};border:1px solid ${stockBajo>0?'#fde047':'#e0e0de'};"><div class="kpi-label" style="color:${stockBajo>0?'#854d0e':'#666'};">Stock bajo/agotado</div><div class="kpi-value" style="color:${stockBajo>0?'#854d0e':'#333'};">${stockBajo}</div></div>
+  `;
+
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = rows.map(p => {
+    const stock   = p.stock_placas    || 0;
+    const apart   = p.apartado_placas || 0;
+    const trans   = p.transito_placas || 0;
+    const disp    = Math.max(0, stock - apart);
+    const m2disp  = disp * (p.m2_placa || 0);
+    const minimo  = p.stock_minimo_placas || 0;
+    let badge, badgeStyle;
+    if (disp <= 0) {
+      badge = '🔴 Sin stock'; badgeStyle = 'background:#fee2e2;color:#991b1b;';
+    } else if (disp <= minimo) {
+      badge = '⚠️ Stock bajo'; badgeStyle = 'background:#fef9c3;color:#854d0e;';
+    } else {
+      badge = '✅ OK'; badgeStyle = 'background:#dcfce7;color:#166534;';
+    }
+    return `<tr style="border-bottom:1px solid #f0f0ee;" onmouseover="this.style.background='#fafaf8'" onmouseout="this.style.background=''">
+      <td style="padding:10px 12px;">
+        <div style="font-weight:600;font-size:13px;">${p.nombre}</div>
+        <div style="font-size:11px;color:#aaa;font-family:monospace;">${p.sku}${p.formato ? ' · '+p.formato : ''}</div>
+        ${p.ubicacion ? '<div style="font-size:11px;color:#bbb;">📍 '+p.ubicacion+'</div>' : ''}
+      </td>
+      <td style="padding:10px 12px;"><span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#f0f0ee;color:#555;">${p.categoria||'—'}</span></td>
+      <td style="padding:10px 12px;text-align:right;font-weight:600;">${stock.toFixed(1)} <span style="font-size:10px;color:#aaa;">pl</span></td>
+      <td style="padding:10px 12px;text-align:right;color:#dc2626;">${apart > 0 ? apart.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
+      <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;">${disp.toFixed(1)} <span style="font-size:10px;color:#aaa;">pl</span></td>
+      <td style="padding:10px 12px;text-align:right;color:#0284c7;">${trans > 0 ? trans.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
+      <td style="padding:10px 12px;text-align:right;color:#555;">${p.m2_placa ? m2disp.toFixed(2)+' m²' : '—'}</td>
+      <td style="padding:10px 12px;text-align:center;"><span style="font-size:11px;padding:3px 8px;border-radius:12px;${badgeStyle}">${badge}</span></td>
+      <td style="padding:10px 12px;text-align:right;">
+        <div style="display:flex;gap:6px;justify-content:flex-end;">
+          <button class="btn btn-sm btn-primary" onclick="invOpenMovPanel('${p.sku}')">± Mov.</button>
+          <button class="btn btn-sm btn-outline" onclick="invEditSKU('${p.sku}')">✏️</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── SKU panel ─────────────────────────────────────────────────────────────────
+function invNuevoSKU() {
+  document.getElementById('inv-sku-title').textContent = 'Nuevo SKU en Inventario';
+  document.getElementById('inv-sku-sku').value = '';
+  document.getElementById('inv-sku-sku').readOnly = false;
+  document.getElementById('inv-sku-nombre').value = '';
+  document.getElementById('inv-sku-cat').value = 'SINTERED STONE';
+  document.getElementById('inv-sku-formato').value = '';
+  document.getElementById('inv-sku-m2').value = '';
+  document.getElementById('inv-sku-minimo').value = '';
+  document.getElementById('inv-sku-ubicacion').value = '';
+  document.getElementById('inv-sku-notas').value = '';
+  document.getElementById('inv-main-panel').style.display = 'none';
+  document.getElementById('inv-sku-panel').style.display = '';
+}
+
+function invEditSKU(sku) {
+  const p = _invData.find(x => x.sku === sku);
+  if (!p) return;
+  document.getElementById('inv-sku-title').textContent = 'Editar SKU — ' + sku;
+  document.getElementById('inv-sku-sku').value = p.sku;
+  document.getElementById('inv-sku-sku').readOnly = true;
+  document.getElementById('inv-sku-nombre').value = p.nombre || '';
+  document.getElementById('inv-sku-cat').value = p.categoria || 'SINTERED STONE';
+  document.getElementById('inv-sku-formato').value = p.formato || '';
+  document.getElementById('inv-sku-m2').value = p.m2_placa || '';
+  document.getElementById('inv-sku-minimo').value = p.stock_minimo_placas || '';
+  document.getElementById('inv-sku-ubicacion').value = p.ubicacion || '';
+  document.getElementById('inv-sku-notas').value = p.notas || '';
+  document.getElementById('inv-main-panel').style.display = 'none';
+  document.getElementById('inv-sku-panel').style.display = '';
+}
+
+async function invGuardarSKU() {
+  const sku    = document.getElementById('inv-sku-sku').value.trim().toUpperCase();
+  const nombre = document.getElementById('inv-sku-nombre').value.trim();
+  if (!sku || !nombre) { notify('SKU y nombre son obligatorios', 'error'); return; }
+  const categoria = document.getElementById('inv-sku-cat').value;
+  const formato   = document.getElementById('inv-sku-formato').value.trim();
+  const m2_placa  = parseFloat(document.getElementById('inv-sku-m2').value) || 0;
+  const row = {
+    sku, nombre, categoria, formato, m2_placa,
+    stock_minimo_placas: parseFloat(document.getElementById('inv-sku-minimo').value) || 0,
+    ubicacion:           document.getElementById('inv-sku-ubicacion').value.trim(),
+    notas:               document.getElementById('inv-sku-notas').value.trim(),
+  };
+  const ok = await invUpsertSKU(row);
+  if (!ok) { notify('Error al guardar SKU', 'error'); return; }
+
+  // Check if already in catalog
+  const allProds = await getAllProducts();
+  const yaEnCatalogo = allProds.find(p => p.sku === sku);
+
+  if (!yaEnCatalogo) {
+    const agregarCatalogo = confirm(
+      `SKU guardado en inventario ✓\n\n¿Agregar "${nombre}" también al catálogo de cotización?\n\nSi dices Sí, aparecerá en el buscador de productos al crear cotizaciones.`
+    );
+    if (agregarCatalogo) {
+      const precio = parseFloat(prompt(`Precio por placa (MXN) para "${nombre}" en el catálogo:`) || '0') || 0;
+      const prod = {
+        sku, nombre, categoria,
+        descripcion: formato,
+        marca: 'KITO',
+        precio,
+        custom: true
+      };
+      const catOk = await saveCustomProduct(prod);
+      if (catOk) notify('SKU guardado en inventario y catálogo ✓', 'success');
+      else notify('SKU en inventario ✓ — error al agregar al catálogo', 'warning');
+    } else {
+      notify('SKU guardado en inventario ✓', 'success');
+    }
+  } else {
+    notify('SKU guardado en inventario ✓', 'success');
+  }
+
+  invCloseSKUPanel();
+  invRender();
+}
+
+function invCloseSKUPanel() {
+  document.getElementById('inv-sku-panel').style.display = 'none';
+  document.getElementById('inv-main-panel').style.display = '';
+}
+
+// ── Movimiento panel ──────────────────────────────────────────────────────────
+async function invOpenMovPanel(sku) {
+  _invMovSku = sku;
+  const p = _invData.find(x => x.sku === sku);
+  document.getElementById('inv-mov-title').textContent = (p ? p.nombre : sku) + ' — Registrar movimiento';
+  document.getElementById('inv-mov-tipo').value   = 'entrada';
+  document.getElementById('inv-mov-placas').value = '';
+  document.getElementById('inv-mov-m2').value     = '';
+  document.getElementById('inv-mov-fecha').value  = today();
+  document.getElementById('inv-mov-ref').value    = '';
+  document.getElementById('inv-mov-cliente').value = '';
+  document.getElementById('inv-mov-notas').value  = '';
+  document.getElementById('inv-main-panel').style.display = 'none';
+  document.getElementById('inv-mov-panel').style.display  = '';
+  // Load historial
+  await invRenderHistorial(sku);
+}
+
+function invMovCalcM2() {
+  const placas = parseFloat(document.getElementById('inv-mov-placas').value) || 0;
+  const sku    = _invMovSku;
+  const p      = _invData.find(x => x.sku === sku);
+  const m2pp   = p ? (p.m2_placa || 0) : 0;
+  document.getElementById('inv-mov-m2').value = m2pp ? (placas * m2pp).toFixed(3) : '';
+}
+
+async function invGuardarMovimiento() {
+  const sku    = _invMovSku;
+  const tipo   = document.getElementById('inv-mov-tipo').value;
+  const placas = parseFloat(document.getElementById('inv-mov-placas').value);
+  if (!sku || isNaN(placas) || placas <= 0) { notify('Ingresa una cantidad válida', 'error'); return; }
+  const m2     = parseFloat(document.getElementById('inv-mov-m2').value) || 0;
+  const fecha  = document.getElementById('inv-mov-fecha').value;
+  const ref    = document.getElementById('inv-mov-ref').value.trim();
+  const cliente = document.getElementById('inv-mov-cliente').value.trim();
+  const notas  = document.getElementById('inv-mov-notas').value.trim();
+
+  // Determine stock deltas
+  let ds = 0, da = 0, dt = 0;
+  switch(tipo) {
+    case 'entrada':        ds = +placas; break;
+    case 'salida':         ds = -placas; da = -(Math.min(placas, (_invData.find(x=>x.sku===sku)?.apartado_placas||0))); break;
+    case 'apartado':       da = +placas; break;
+    case 'liberado':       da = -placas; break;
+    case 'transito_entrada': dt = +placas; break;
+    case 'transito_llegada': dt = -placas; ds = +placas; break;
+    case 'ajuste':         ds = placas; break; // can be negative
+  }
+
+  const movOk = await invInsertMovimiento({ sku, tipo, placas, m2, referencia: ref, cliente, notas, fecha });
+  const stockOk = await invUpdateStock(sku, ds, da, dt);
+
+  if (movOk && stockOk) {
+    notify('Movimiento registrado ✓', 'success');
+    document.getElementById('inv-mov-placas').value = '';
+    document.getElementById('inv-mov-m2').value = '';
+    document.getElementById('inv-mov-ref').value = '';
+    document.getElementById('inv-mov-cliente').value = '';
+    document.getElementById('inv-mov-notas').value = '';
+    await invRenderHistorial(sku);
+    _invData = await invLoad(); // refresh local cache
+  } else {
+    notify('Error al registrar movimiento', 'error');
+  }
+}
+
+async function invRenderHistorial(sku) {
+  const movs = await invLoadMovimientos(sku);
+  const el   = document.getElementById('inv-mov-historial');
+  if (!el) return;
+  if (!movs.length) { el.innerHTML = '<div style="color:#aaa;font-size:13px;padding:12px 0;">Sin movimientos registrados</div>'; return; }
+  const TIPO_LABEL = {
+    entrada:         '📥 Entrada',
+    salida:          '📤 Salida',
+    apartado:        '🔒 Apartado',
+    liberado:        '🔓 Liberado',
+    transito_entrada:'🚢 A tránsito',
+    transito_llegada:'🏭 Tránsito llegó',
+    ajuste:          '⚖️ Ajuste',
+  };
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:#f5f5f3;border-bottom:1px solid #e0e0de;">
+      <th style="padding:8px 10px;text-align:left;">Fecha</th>
+      <th style="padding:8px 10px;text-align:left;">Tipo</th>
+      <th style="padding:8px 10px;text-align:right;">Placas</th>
+      <th style="padding:8px 10px;text-align:right;">M²</th>
+      <th style="padding:8px 10px;text-align:left;">Referencia</th>
+      <th style="padding:8px 10px;text-align:left;">Cliente</th>
+      <th style="padding:8px 10px;text-align:left;">Notas</th>
+    </tr></thead>
+    <tbody>${movs.map(m => `<tr style="border-bottom:1px solid #f5f5f3;">
+      <td style="padding:7px 10px;color:#666;">${m.fecha || '—'}</td>
+      <td style="padding:7px 10px;">${TIPO_LABEL[m.tipo] || m.tipo}</td>
+      <td style="padding:7px 10px;text-align:right;font-weight:600;">${(m.placas||0).toFixed(1)}</td>
+      <td style="padding:7px 10px;text-align:right;color:#888;">${m.m2 ? m.m2.toFixed(2) : '—'}</td>
+      <td style="padding:7px 10px;color:#555;">${m.referencia || '—'}</td>
+      <td style="padding:7px 10px;color:#555;">${m.cliente || '—'}</td>
+      <td style="padding:7px 10px;color:#888;">${m.notas || '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function invCloseMovPanel() {
+  document.getElementById('inv-mov-panel').style.display = 'none';
+  document.getElementById('inv-main-panel').style.display = '';
+  invRender();
 }
 
 // =====================================================================
