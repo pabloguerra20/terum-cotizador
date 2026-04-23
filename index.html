@@ -718,9 +718,9 @@
       <span class="nav-icon">📦</span>
       <span class="nav-label">Inventario</span>
     </button>
-    <button class="nav-tab placeholder" title="Próximamente">
-      <span class="nav-icon">🛒</span>
-      <span class="nav-label">Órdenes de Pedido</span>
+    <button class="nav-tab" onclick="switchView('contenedores')" title="Contenedores">
+      <span class="nav-icon">🚢</span>
+      <span class="nav-label">Contenedores</span>
     </button>
 
     <!-- FINANZAS (placeholder) -->
@@ -1880,6 +1880,150 @@
       </div>
     </div><!-- /#view-inventario -->
 
+    <!-- ═══════════════════════════════════════════════════════════════
+         CONTENEDORES
+    ═══════════════════════════════════════════════════════════════ -->
+    <div id="view-contenedores" class="view">
+
+      <!-- Lista de contenedores -->
+      <div id="cont-list-panel">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+          <input type="text" id="cont-search" placeholder="🔍 Buscar contenedor, proveedor..." oninput="contRender()"
+            style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;min-width:240px;flex:1;">
+          <select id="cont-filter-status" onchange="contRender()" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;">
+            <option value="">Todos los status</option>
+            <option value="ordenado">📋 Ordenado</option>
+            <option value="embarcado">🚢 Embarcado</option>
+            <option value="en_aduana">🏛 En aduana</option>
+            <option value="entregado">✅ Entregado</option>
+          </select>
+        </div>
+
+        <!-- KPIs -->
+        <div id="cont-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;"></div>
+
+        <!-- Timeline de próximas llegadas -->
+        <div id="cont-timeline" style="margin-bottom:24px;"></div>
+
+        <!-- Tabla -->
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f3;border-bottom:2px solid #e0e0de;">
+                <th style="padding:10px 12px;text-align:left;font-weight:600;color:#555;">ID</th>
+                <th style="padding:10px 12px;text-align:left;font-weight:600;color:#555;">Proveedor</th>
+                <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Status</th>
+                <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Orden</th>
+                <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Embarque est.</th>
+                <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Llegada est.</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">SKUs</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Placas totales</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="cont-tbody"></tbody>
+          </table>
+        </div>
+        <div id="cont-empty" style="display:none;padding:48px;text-align:center;color:#aaa;">
+          <div style="font-size:36px;margin-bottom:12px;">🚢</div>
+          <div style="font-size:15px;font-weight:500;margin-bottom:8px;">No hay contenedores registrados</div>
+          <div style="font-size:13px;margin-bottom:20px;">Registra tu primer contenedor con el botón superior</div>
+        </div>
+      </div>
+
+      <!-- Editor de contenedor -->
+      <div id="cont-editor-panel" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+          <button class="btn btn-outline btn-sm" onclick="contBackToList()">← Regresar</button>
+          <h3 id="cont-editor-title" style="margin:0;font-size:16px;font-weight:600;">Nuevo Contenedor</h3>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <button class="btn btn-primary" onclick="contGuardar()">💾 Guardar</button>
+            <button id="cont-btn-entregar" class="btn btn-success" onclick="contMarcarEntregado()" style="display:none;">🏭 Marcar como Entregado</button>
+          </div>
+        </div>
+
+        <!-- Info general -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;padding:20px;background:#f9f9f7;border-radius:10px;border:1px solid #e0e0de;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">ID CONTENEDOR</label>
+            <input type="text" id="cont-id" placeholder="Ej. CONT-2026-001" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">PROVEEDOR</label>
+            <input type="text" id="cont-proveedor" placeholder="Ej. KITO, Time Ceramics" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">STATUS</label>
+            <select id="cont-status" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+              <option value="ordenado">📋 Ordenado</option>
+              <option value="embarcado">🚢 Embarcado</option>
+              <option value="en_aduana">🏛 En aduana</option>
+              <option value="entregado">✅ Entregado</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">FECHA ORDEN</label>
+            <input type="date" id="cont-fecha-orden" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">EMBARQUE ESTIMADO</label>
+            <input type="date" id="cont-fecha-embarque" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">LLEGADA ESTIMADA</label>
+            <input type="date" id="cont-fecha-llegada" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+          <div style="grid-column:1/-1;">
+            <label style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;display:block;margin-bottom:4px;">NOTAS</label>
+            <input type="text" id="cont-notas" placeholder="Observaciones, número de booking, etc." style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+          </div>
+        </div>
+
+        <!-- Agregar SKUs al contenedor -->
+        <div style="margin-bottom:16px;">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#333;">Productos en este contenedor</h4>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:16px;background:#f9f9f7;border-radius:8px;border:1px solid #e0e0de;margin-bottom:12px;">
+            <div style="flex:3;min-width:240px;position:relative;">
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">BUSCAR PRODUCTO (SKU o nombre)</label>
+              <input type="text" id="cont-add-search" placeholder="Escribe SKU o nombre del producto..."
+                style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;"
+                oninput="contSearchProducto(this)" autocomplete="off">
+              <div id="cont-add-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.1);max-height:220px;overflow-y:auto;z-index:999;margin-top:2px;"></div>
+              <input type="hidden" id="cont-add-sku">
+            </div>
+            <div style="flex:2;min-width:160px;">
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">NOMBRE</label>
+              <input type="text" id="cont-add-nombre" placeholder="—"
+                style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;background:#f0f0ee;color:#666;" readonly>
+            </div>
+            <div style="flex:1;min-width:100px;">
+              <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:4px;">PLACAS</label>
+              <input type="number" id="cont-add-placas" min="1" step="1" placeholder="0"
+                style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
+            </div>
+            <button class="btn btn-primary" onclick="contAgregarSKU()" style="white-space:nowrap;">+ Agregar</button>
+          </div>
+
+          <!-- Tabla de SKUs del contenedor -->
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f3;border-bottom:2px solid #e0e0de;">
+                <th style="padding:9px 12px;text-align:left;font-weight:600;color:#555;">SKU</th>
+                <th style="padding:9px 12px;text-align:left;font-weight:600;color:#555;">Nombre</th>
+                <th style="padding:9px 12px;text-align:right;font-weight:600;color:#555;">Placas</th>
+                <th style="padding:9px 12px;text-align:right;font-weight:600;color:#555;">M²</th>
+                <th style="padding:9px 12px;text-align:right;font-weight:600;color:#555;">Stock actual</th>
+                <th style="padding:9px 12px;"></th>
+              </tr>
+            </thead>
+            <tbody id="cont-items-tbody"></tbody>
+            <tfoot id="cont-items-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /#view-contenedores -->
+
   </div><!-- /#content-area -->
 </div><!-- /#app-shell -->
 
@@ -2920,7 +3064,7 @@ async function switchView(v) {
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
   document.getElementById('view-' + v).classList.add('active');
   // Sidebar order: nueva=0, historial=1, catalogo=2, listaprecios=3, convenio=4, dashboard=5
-  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5, inventario: 6 };
+  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5, inventario: 6, contenedores: 7 };
   const tabs = document.querySelectorAll('.nav-tab');
   if (tabs[tabIdx[v] ?? 0]) tabs[tabIdx[v] ?? 0].classList.add('active');
   // Update topbar
@@ -2931,7 +3075,8 @@ async function switchView(v) {
     listaprecios: 'Lista de Precios',
     convenio: 'Precios Convenio',
     dashboard: 'Dashboard Comercial',
-    inventario: 'Gestión de Inventario'
+    inventario: 'Gestión de Inventario',
+    contenedores: 'Contenedores en Tránsito'
   };
   const actions = {
     nueva: '<button class="btn btn-success btn-sm" onclick="saveCot()">💾 Guardar</button><button class="btn btn-primary btn-sm" onclick="exportPDF()">📄 PDF</button><button class="btn btn-outline btn-sm" onclick="newCot()">🆕 Nueva</button>',
@@ -2940,7 +3085,8 @@ async function switchView(v) {
     listaprecios: '',
     convenio: '<button class="btn btn-primary btn-sm" onclick="convenioNuevo()">🤝 Nueva Lista</button>',
     dashboard: '<button class="btn btn-secondary btn-sm" onclick="renderDashboard()">↻ Actualizar</button>',
-    inventario: '<button class="btn btn-primary btn-sm" onclick="invNuevoSKU()">+ Nuevo SKU</button><button class="btn btn-secondary btn-sm" onclick="invRender()">↻ Actualizar</button>'
+    inventario: '<button class="btn btn-primary btn-sm" onclick="invNuevoSKU()">+ Nuevo SKU</button><button class="btn btn-secondary btn-sm" onclick="invRender()">↻ Actualizar</button>',
+    contenedores: '<button class="btn btn-primary btn-sm" onclick="contNuevo()">🚢 Nuevo Contenedor</button><button class="btn btn-secondary btn-sm" onclick="contRender()">↻ Actualizar</button>'
   };
   const titleEl = document.getElementById('topbar-title');
   const actionsEl = document.getElementById('topbar-actions');
@@ -2951,6 +3097,7 @@ async function switchView(v) {
   if (v === 'catalogo') renderCatalog();
   if (v === 'convenio') renderConvenioList();
   if (v === 'inventario') invRender();
+  if (v === 'contenedores') contRender();
 }
 
 
@@ -3640,7 +3787,24 @@ async function addNewProduct() {
   document.getElementById('np-desc').value = '';
   document.getElementById('np-sku').value = '';
   document.getElementById('np-precio').value = '';
-  notify('Producto agregado al catálogo ✓', 'success');
+
+  // Bidirectional sync: offer to add to inventory too
+  const invData = await invLoad();
+  const yaEnInv = invData.find(p => p.sku === sku);
+  if (!yaEnInv) {
+    const agregarInv = confirm(
+      `Producto agregado al catálogo ✓\n\n¿Agregar "${nombre}" también al módulo de inventario?\n\nSi dices Sí, podrás registrar entradas, salidas y apartados de este SKU.`
+    );
+    if (agregarInv) {
+      const m2 = parseFloat(prompt(`M² por placa para "${nombre}" (opcional, pon 0 si no aplica):`) || '0') || 0;
+      await invUpsertSKU({ sku, nombre, categoria: cat, formato: desc, m2_placa: m2, stock_minimo_placas: 0 });
+      notify('Producto agregado al catálogo e inventario ✓', 'success');
+    } else {
+      notify('Producto agregado al catálogo ✓', 'success');
+    }
+  } else {
+    notify('Producto agregado al catálogo ✓', 'success');
+  }
   renderCatalog();
 }
 
@@ -4249,6 +4413,354 @@ function convenioPDFFromData(data) {
 
 
 
+
+// =====================================================================
+// CONTENEDORES — Supabase helpers + lógica completa
+// =====================================================================
+let _contItems = [];   // items del contenedor en edición
+let _contEditingId = null;
+let _contInvData = []; // cache de inventario para SKU lookup
+
+const CONT_STATUS_META = {
+  ordenado:   { label: '📋 Ordenado',   style: 'background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;' },
+  embarcado:  { label: '🚢 Embarcado',  style: 'background:#f0fdf4;color:#15803d;border:1px solid #86efac;' },
+  en_aduana:  { label: '🏛 En aduana',  style: 'background:#fef9c3;color:#854d0e;border:1px solid #fde047;' },
+  entregado:  { label: '✅ Entregado',  style: 'background:#f5f5f3;color:#555;border:1px solid #e0e0de;' },
+};
+
+async function contLoad() {
+  const { data, error } = await _sb.from('contenedores').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('contLoad:', error); return []; }
+  return data || [];
+}
+
+async function contUpsert(row) {
+  const { error } = await _sb.from('contenedores').upsert(row, { onConflict: 'id' });
+  if (error) { console.error('contUpsert:', error); return false; }
+  return true;
+}
+
+async function contDelete(id) {
+  const { error } = await _sb.from('contenedores').delete().eq('id', id);
+  return !error;
+}
+
+// ── Render lista ──────────────────────────────────────────────────────────────
+async function contRender() {
+  const all = await contLoad();
+  const q   = (document.getElementById('cont-search')?.value || '').toLowerCase();
+  const fs  = document.getElementById('cont-filter-status')?.value || '';
+
+  let rows = all.filter(c => {
+    if (fs && c.status !== fs) return false;
+    if (q && !((c.id||'').toLowerCase().includes(q) || (c.proveedor||'').toLowerCase().includes(q) || (c.notas||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  // KPIs
+  const activos   = all.filter(c => c.status !== 'entregado');
+  const enMar     = all.filter(c => c.status === 'embarcado');
+  const enAduana  = all.filter(c => c.status === 'en_aduana');
+  const totalPlacas = all.filter(c => c.status !== 'entregado')
+    .reduce((s,c) => s + (c.items||[]).reduce((ss,i) => ss + (i.placas||0), 0), 0);
+
+  document.getElementById('cont-kpis').innerHTML = `
+    <div class="kpi-card kpi-blue"><div class="kpi-label">Contenedores activos</div><div class="kpi-value">${activos.length}</div></div>
+    <div class="kpi-card" style="background:#f0fdf4;border:1px solid #86efac;"><div class="kpi-label" style="color:#166534;">En mar</div><div class="kpi-value" style="color:#166534;">${enMar.length}</div></div>
+    <div class="kpi-card" style="background:#fef9c3;border:1px solid #fde047;"><div class="kpi-label" style="color:#854d0e;">En aduana</div><div class="kpi-value" style="color:#854d0e;">${enAduana.length}</div></div>
+    <div class="kpi-card kpi-green"><div class="kpi-label">Placas en tránsito</div><div class="kpi-value">${totalPlacas.toFixed(0)}</div></div>
+  `;
+
+  // Timeline de próximas llegadas
+  const proximos = all
+    .filter(c => c.status !== 'entregado' && c.fecha_llegada_est)
+    .sort((a,b) => a.fecha_llegada_est.localeCompare(b.fecha_llegada_est))
+    .slice(0, 4);
+
+  const timelineEl = document.getElementById('cont-timeline');
+  if (proximos.length) {
+    const hoy = new Date();
+    timelineEl.innerHTML = `
+      <div style="font-size:12px;font-weight:700;color:#666;letter-spacing:.5px;margin-bottom:8px;">PRÓXIMAS LLEGADAS</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        ${proximos.map(c => {
+          const eta = new Date(c.fecha_llegada_est + 'T12:00:00');
+          const dias = Math.ceil((eta - hoy) / 86400000);
+          const meta = CONT_STATUS_META[c.status] || CONT_STATUS_META.ordenado;
+          const placas = (c.items||[]).reduce((s,i) => s + (i.placas||0), 0);
+          return `<div style="padding:12px 16px;border-radius:8px;${meta.style};min-width:180px;cursor:pointer;" onclick="contEditar('${c.id}')">
+            <div style="font-weight:700;font-size:13px;">${c.id}</div>
+            <div style="font-size:11px;opacity:.8;margin-top:2px;">${c.proveedor||'—'}</div>
+            <div style="font-size:12px;margin-top:6px;font-weight:600;">${dias > 0 ? 'En '+dias+' días' : dias === 0 ? 'Hoy' : 'Hace '+Math.abs(dias)+' días'}</div>
+            <div style="font-size:11px;opacity:.7;">${placas} placas · ${(c.items||[]).length} SKUs</div>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+  } else {
+    timelineEl.innerHTML = '';
+  }
+
+  // Tabla
+  const tbody = document.getElementById('cont-tbody');
+  const empty = document.getElementById('cont-empty');
+  if (!rows.length) { tbody.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = rows.map(c => {
+    const meta = CONT_STATUS_META[c.status] || CONT_STATUS_META.ordenado;
+    const placas = (c.items||[]).reduce((s,i) => s + (i.placas||0), 0);
+    const skus   = (c.items||[]).length;
+    return `<tr style="border-bottom:1px solid #f0f0ee;" onmouseover="this.style.background='#fafaf8'" onmouseout="this.style.background=''">
+      <td style="padding:10px 12px;font-weight:700;">${c.id}</td>
+      <td style="padding:10px 12px;">${c.proveedor||'—'}</td>
+      <td style="padding:10px 12px;text-align:center;"><span style="font-size:11px;padding:3px 10px;border-radius:12px;${meta.style}">${meta.label}</span></td>
+      <td style="padding:10px 12px;text-align:center;color:#888;font-size:12px;">${c.fecha_orden||'—'}</td>
+      <td style="padding:10px 12px;text-align:center;color:#888;font-size:12px;">${c.fecha_embarque_est||'—'}</td>
+      <td style="padding:10px 12px;text-align:center;font-weight:600;color:#0369a1;">${c.fecha_llegada_est||'—'}</td>
+      <td style="padding:10px 12px;text-align:right;">${skus}</td>
+      <td style="padding:10px 12px;text-align:right;font-weight:600;">${placas.toFixed(0)}</td>
+      <td style="padding:10px 12px;text-align:right;">
+        <div style="display:flex;gap:6px;justify-content:flex-end;">
+          <button class="btn btn-sm btn-secondary" onclick="contEditar('${c.id}')">✏️ Ver/Editar</button>
+          ${c.status !== 'entregado' ? `<button class="btn btn-sm btn-danger" onclick="contEliminar('${c.id}')">✕</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Nuevo contenedor ──────────────────────────────────────────────────────────
+async function contNuevo() {
+  _contEditingId = null;
+  _contItems = [];
+  // Generate ID
+  const { data } = await _sb.from('contenedores').select('id');
+  const nums = (data||[]).map(c => parseInt((c.id||'').replace(/\D/g,'')) || 0);
+  const next = (nums.length ? Math.max(...nums) + 1 : 1);
+  document.getElementById('cont-id').value = 'CONT-' + new Date().getFullYear() + '-' + String(next).padStart(3,'0');
+  document.getElementById('cont-id').readOnly = false;
+  document.getElementById('cont-proveedor').value = '';
+  document.getElementById('cont-status').value = 'ordenado';
+  document.getElementById('cont-fecha-orden').value = today();
+  document.getElementById('cont-fecha-embarque').value = '';
+  document.getElementById('cont-fecha-llegada').value = '';
+  document.getElementById('cont-notas').value = '';
+  document.getElementById('cont-editor-title').textContent = 'Nuevo Contenedor';
+  document.getElementById('cont-btn-entregar').style.display = 'none';
+  await contCargarSKUDatalist();
+  contRenderItems();
+  document.getElementById('cont-list-panel').style.display = 'none';
+  document.getElementById('cont-editor-panel').style.display = '';
+}
+
+async function contEditar(id) {
+  const all = await contLoad();
+  const c = all.find(x => x.id === id);
+  if (!c) return;
+  _contEditingId = id;
+  _contItems = (c.items || []).map(i => ({...i}));
+  document.getElementById('cont-id').value = c.id;
+  document.getElementById('cont-id').readOnly = true;
+  document.getElementById('cont-proveedor').value = c.proveedor || '';
+  document.getElementById('cont-status').value = c.status || 'ordenado';
+  document.getElementById('cont-fecha-orden').value = c.fecha_orden || '';
+  document.getElementById('cont-fecha-embarque').value = c.fecha_embarque_est || '';
+  document.getElementById('cont-fecha-llegada').value = c.fecha_llegada_est || '';
+  document.getElementById('cont-notas').value = c.notas || '';
+  document.getElementById('cont-editor-title').textContent = 'Contenedor — ' + id;
+  // Show entregar button only if not yet entregado
+  document.getElementById('cont-btn-entregar').style.display = c.status !== 'entregado' ? '' : 'none';
+  await contCargarSKUDatalist();
+  contRenderItems();
+  document.getElementById('cont-list-panel').style.display = 'none';
+  document.getElementById('cont-editor-panel').style.display = '';
+}
+
+function contBackToList() {
+  document.getElementById('cont-editor-panel').style.display = 'none';
+  document.getElementById('cont-list-panel').style.display = '';
+  contRender();
+}
+
+async function contCargarSKUDatalist() {
+  _contInvData = await invLoad();
+  _contAllProds = await getAllProducts();
+}
+
+let _contAllProds = [];
+
+async function contSearchProducto(input) {
+  const q = input.value.toLowerCase().trim();
+  const dd = document.getElementById('cont-add-dropdown');
+  if (!dd) return;
+  if (!_contAllProds.length) _contAllProds = await getAllProducts();
+  if (q.length < 1) { dd.style.display = 'none'; return; }
+  const matches = _contAllProds
+    .filter(p => p.nombre.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
+    .slice(0, 30);
+  if (!matches.length) {
+    dd.innerHTML = '<div style="padding:10px 12px;color:#aaa;font-size:13px;">Sin resultados</div>';
+    dd.style.display = 'block'; return;
+  }
+  dd.innerHTML = matches.map(p => `
+    <div onmousedown="contSeleccionarProducto('${p.sku}')"
+      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #f0f0ee;font-size:13px;"
+      onmouseover="this.style.background='#f5f5f3'" onmouseout="this.style.background=''">
+      <span style="font-weight:600;">${p.nombre}</span>
+      <span style="color:#aaa;font-size:11px;margin-left:8px;">${p.sku}</span>
+      <span style="float:right;font-size:11px;color:#888;">${p.categoria||''}</span>
+    </div>`).join('');
+  dd.style.display = 'block';
+}
+
+function contSeleccionarProducto(sku) {
+  const prod = _contAllProds.find(p => p.sku === sku);
+  if (!prod) return;
+  document.getElementById('cont-add-sku').value = sku;
+  document.getElementById('cont-add-search').value = prod.nombre + ' — ' + sku;
+  document.getElementById('cont-add-nombre').value = prod.nombre;
+  document.getElementById('cont-add-dropdown').style.display = 'none';
+  document.getElementById('cont-add-placas').focus();
+}
+
+function contAgregarSKU() {
+  const sku    = document.getElementById('cont-add-sku').value.trim().toUpperCase();
+  const placas = parseFloat(document.getElementById('cont-add-placas').value) || 0;
+  if (!sku) { notify('Selecciona un producto del buscador', 'error'); return; }
+  if (placas <= 0) { notify('Ingresa la cantidad de placas', 'error'); return; }
+  if (_contItems.find(i => i.sku === sku)) { notify('Ese SKU ya está en el contenedor', 'error'); return; }
+  const prod = _contAllProds.find(p => p.sku === sku);
+  const invProd = _contInvData.find(p => p.sku === sku);
+  const m2pp = invProd?.m2_placa || 0;
+  _contItems.push({ sku, nombre: prod?.nombre || invProd?.nombre || sku, placas, m2: placas * m2pp });
+  document.getElementById('cont-add-search').value = '';
+  document.getElementById('cont-add-sku').value = '';
+  document.getElementById('cont-add-nombre').value = '';
+  document.getElementById('cont-add-placas').value = '';
+  contRenderItems();
+}
+
+function contQuitarSKU(idx) {
+  _contItems.splice(idx, 1);
+  contRenderItems();
+}
+
+function contRenderItems() {
+  const tbody = document.getElementById('cont-items-tbody');
+  const tfoot = document.getElementById('cont-items-tfoot');
+  if (!tbody) return;
+  if (!_contItems.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa;font-size:13px;">Sin productos. Agrega SKUs arriba.</td></tr>`;
+    tfoot.innerHTML = '';
+    return;
+  }
+  const totalPlacas = _contItems.reduce((s,i) => s + (i.placas||0), 0);
+  const totalM2     = _contItems.reduce((s,i) => s + (i.m2||0), 0);
+  tbody.innerHTML = _contItems.map((i,idx) => {
+    const inv = _contInvData.find(p => p.sku === i.sku);
+    const disp = inv ? Math.max(0,(inv.stock_placas||0)-(inv.apartado_placas||0)) : null;
+    const stockBadge = disp === null
+      ? '<span style="color:#aaa;font-size:11px;">sin registro inv.</span>'
+      : `<span style="font-size:11px;color:${disp>0?'#166534':'#991b1b'};">${disp.toFixed(0)} pl actuales</span>`;
+    return `<tr style="border-bottom:1px solid #f0f0ee;">
+      <td style="padding:9px 12px;font-family:monospace;font-size:12px;">${i.sku}</td>
+      <td style="padding:9px 12px;font-weight:500;">${i.nombre}</td>
+      <td style="padding:9px 12px;text-align:right;font-weight:600;">${(i.placas||0).toFixed(0)}</td>
+      <td style="padding:9px 12px;text-align:right;color:#666;">${(i.m2||0).toFixed(2)} m²</td>
+      <td style="padding:9px 12px;text-align:right;">${stockBadge}</td>
+      <td style="padding:9px 12px;text-align:right;"><button class="btn btn-danger btn-sm" onclick="contQuitarSKU(${idx})">&#x2715;</button></td>
+    </tr>`;
+  }).join('');
+  tfoot.innerHTML = `
+    <tr style="background:#f5f5f3;border-top:2px solid #e0e0de;font-weight:700;">
+      <td colspan="2" style="padding:9px 12px;">TOTALES</td>
+      <td style="padding:9px 12px;text-align:right;">${totalPlacas.toFixed(0)} pl</td>
+      <td style="padding:9px 12px;text-align:right;">${totalM2.toFixed(2)} m²</td>
+      <td colspan="2"></td>
+    </tr>`;
+}
+
+async function contGuardar() {
+  const id = document.getElementById('cont-id').value.trim().toUpperCase();
+  if (!id) { notify('Ingresa un ID para el contenedor', 'error'); return; }
+  const isNuevo = !_contEditingId;
+  const prevStatus = _contEditingId ? null : null;
+
+  const row = {
+    id,
+    proveedor:         document.getElementById('cont-proveedor').value.trim(),
+    status:            document.getElementById('cont-status').value,
+    fecha_orden:       document.getElementById('cont-fecha-orden').value || null,
+    fecha_embarque_est: document.getElementById('cont-fecha-embarque').value || null,
+    fecha_llegada_est: document.getElementById('cont-fecha-llegada').value || null,
+    notas:             document.getElementById('cont-notas').value.trim(),
+    items:             _contItems,
+  };
+
+  // Si es nuevo y status != ordenado, o si cambia a embarcado — subir tránsito
+  if (isNuevo && _contItems.length > 0) {
+    const ok = await contUpsert(row);
+    if (!ok) { notify('Error al guardar contenedor', 'error'); return; }
+    // Registrar en tránsito en inventario
+    await contRegistrarTransito(id, _contItems);
+    notify('Contenedor guardado — stock en tránsito actualizado ✓', 'success');
+  } else {
+    const ok = await contUpsert(row);
+    if (!ok) { notify('Error al guardar contenedor', 'error'); return; }
+    notify('Contenedor guardado ✓', 'success');
+  }
+  _contEditingId = id;
+  document.getElementById('cont-id').readOnly = true;
+  document.getElementById('cont-btn-entregar').style.display = row.status !== 'entregado' ? '' : 'none';
+  document.getElementById('cont-editor-title').textContent = 'Contenedor — ' + id;
+}
+
+async function contRegistrarTransito(contId, items) {
+  for (const item of items) {
+    await invInsertMovimiento({
+      sku: item.sku, tipo: 'transito_entrada',
+      placas: item.placas, m2: item.m2 || 0,
+      referencia: contId, notas: 'Registrado en tránsito — contenedor ' + contId,
+      fecha: today()
+    });
+    await invUpdateStock(item.sku, 0, 0, item.placas);
+  }
+}
+
+async function contMarcarEntregado() {
+  if (!_contEditingId) return;
+  const placasTotales = _contItems.reduce((s,i) => s + (i.placas||0), 0);
+  const resumen = _contItems.map(i => `• ${i.nombre}: ${i.placas} placas`).join('\n');
+  if (!confirm(`¿Marcar contenedor ${_contEditingId} como ENTREGADO?\n\nSe moverá el siguiente stock de tránsito → bodega:\n${resumen}\n\nTotal: ${placasTotales} placas\n\nEsta acción no se puede deshacer.`)) return;
+
+  // Mover tránsito → bodega para cada SKU
+  for (const item of _contItems) {
+    await invInsertMovimiento({
+      sku: item.sku, tipo: 'transito_llegada',
+      placas: item.placas, m2: item.m2 || 0,
+      referencia: _contEditingId,
+      notas: 'Llegada a bodega — contenedor ' + _contEditingId,
+      fecha: today()
+    });
+    // transito_llegada: -tránsito +bodega
+    await invUpdateStock(item.sku, item.placas, 0, -item.placas);
+  }
+
+  // Actualizar status del contenedor
+  document.getElementById('cont-status').value = 'entregado';
+  await contGuardar();
+  document.getElementById('cont-btn-entregar').style.display = 'none';
+  notify(`Contenedor ${_contEditingId} entregado — ${placasTotales} placas movidas a bodega ✓`, 'success');
+}
+
+async function contEliminar(id) {
+  if (!confirm(`¿Eliminar contenedor ${id}?\n\nNota: el stock en tránsito registrado NO se revertirá automáticamente. Ajusta el inventario manualmente si es necesario.`)) return;
+  await contDelete(id);
+  contRender();
+  notify('Contenedor eliminado');
+}
+
 // =====================================================================
 // INVENTARIO ↔ COTIZACIONES — Conexión automática
 // =====================================================================
@@ -4455,9 +4967,29 @@ async function invInsertMovimiento(mov) {
 }
 
 async function invUpdateStock(sku, delta_stock, delta_apartado, delta_transito) {
-  // Read current then update atomically
+  // Read current stock
   const { data } = await _sb.from('inventario').select('stock_placas,apartado_placas,transito_placas').eq('sku', sku).single();
-  if (!data) return false;
+
+  if (!data) {
+    // SKU doesn't exist in inventory — auto-create it from catalog
+    const allProds = await getAllProducts();
+    const prod = allProds.find(p => p.sku === sku);
+    const invProd = _invData?.find(p => p.sku === sku);
+    const newRow = {
+      sku,
+      nombre:      prod?.nombre || invProd?.nombre || sku,
+      categoria:   prod?.categoria || invProd?.categoria || '',
+      formato:     prod?.descripcion || invProd?.formato || '',
+      m2_placa:    invProd?.m2_placa || 0,
+      stock_placas:    Math.max(0, delta_stock),
+      apartado_placas: Math.max(0, delta_apartado),
+      transito_placas: Math.max(0, delta_transito),
+      stock_minimo_placas: 0,
+    };
+    const { error } = await _sb.from('inventario').insert(newRow);
+    return !error;
+  }
+
   const newStock    = Math.max(0, (data.stock_placas    || 0) + delta_stock);
   const newApartado = Math.max(0, (data.apartado_placas || 0) + delta_apartado);
   const newTransito = Math.max(0, (data.transito_placas || 0) + delta_transito);
@@ -4473,6 +5005,33 @@ async function invUpdateStock(sku, delta_stock, delta_apartado, delta_transito) 
 // ── Render main table ─────────────────────────────────────────────────────────
 async function invRender() {
   _invData = await invLoad();
+  // Build inventory map from Supabase
+  const invMap = {};
+  _invData.forEach(p => invMap[p.sku] = p);
+
+  // Merge ALL catalog products with inventory data
+  const allCatalog = await getAllProducts();
+  // Build unified list: catalog products enriched with inv data, plus inv-only SKUs
+  const catalogSkus = new Set(allCatalog.map(p => p.sku));
+  const invOnlySkus = _invData.filter(p => !catalogSkus.has(p.sku));
+
+  const merged = [
+    ...allCatalog.map(p => ({
+      sku:               p.sku,
+      nombre:            p.nombre,
+      categoria:         p.categoria || '',
+      formato:           p.descripcion || '',
+      m2_placa:          invMap[p.sku]?.m2_placa || 0,
+      stock_placas:      invMap[p.sku]?.stock_placas || 0,
+      apartado_placas:   invMap[p.sku]?.apartado_placas || 0,
+      transito_placas:   invMap[p.sku]?.transito_placas || 0,
+      stock_minimo_placas: invMap[p.sku]?.stock_minimo_placas || 0,
+      ubicacion:         invMap[p.sku]?.ubicacion || '',
+      enInventario:      !!invMap[p.sku],
+    })),
+    ...invOnlySkus.map(p => ({ ...p, enInventario: true }))
+  ];
+
   const q     = (document.getElementById('inv-search')?.value || '').toLowerCase();
   const fCat  = document.getElementById('inv-filter-cat')?.value  || '';
   const fStat = document.getElementById('inv-filter-status')?.value || '';
@@ -4480,7 +5039,7 @@ async function invRender() {
   const empty = document.getElementById('inv-empty');
   if (!tbody) return;
 
-  let rows = _invData.filter(p => {
+  let rows = merged.filter(p => {
     if (fCat  && p.categoria !== fCat) return false;
     const disp = (p.stock_placas || 0) - (p.apartado_placas || 0);
     if (fStat === 'ok'  && !(disp > (p.stock_minimo_placas || 0))) return false;
@@ -4490,16 +5049,17 @@ async function invRender() {
     return true;
   });
 
-  // KPIs
-  const totalSKUs    = _invData.length;
-  const totalDisp    = _invData.reduce((s,p) => s + Math.max(0,(p.stock_placas||0)-(p.apartado_placas||0)), 0);
-  const totalTransito = _invData.reduce((s,p) => s + (p.transito_placas||0), 0);
-  const stockBajo    = _invData.filter(p => {
+  // KPIs — only from SKUs that have actual inventory records
+  const withInv = merged.filter(p => p.enInventario);
+  const totalSKUs    = withInv.length;
+  const totalDisp    = withInv.reduce((s,p) => s + Math.max(0,(p.stock_placas||0)-(p.apartado_placas||0)), 0);
+  const totalTransito = withInv.reduce((s,p) => s + (p.transito_placas||0), 0);
+  const stockBajo    = withInv.filter(p => {
     const d = (p.stock_placas||0)-(p.apartado_placas||0);
-    return d <= (p.stock_minimo_placas||0) && d >= 0;
+    return d <= (p.stock_minimo_placas||0) && d >= 0 && p.stock_minimo_placas > 0;
   }).length;
   document.getElementById('inv-kpis').innerHTML = `
-    <div class="kpi-card kpi-blue"><div class="kpi-label">SKUs activos</div><div class="kpi-value">${totalSKUs}</div></div>
+    <div class="kpi-card kpi-blue"><div class="kpi-label">SKUs con registro</div><div class="kpi-value">${totalSKUs}</div><div class="kpi-sub">${merged.length} en catálogo</div></div>
     <div class="kpi-card kpi-green"><div class="kpi-label">Placas disponibles</div><div class="kpi-value">${totalDisp.toFixed(1)}</div></div>
     <div class="kpi-card" style="background:#f0fdf4;border:1px solid #bbf7d0;"><div class="kpi-label" style="color:#166534;">En tránsito</div><div class="kpi-value" style="color:#166534;">${totalTransito.toFixed(1)}</div></div>
     <div class="kpi-card" style="background:${stockBajo>0?'#fef9c3':'#f5f5f3'};border:1px solid ${stockBajo>0?'#fde047':'#e0e0de'};"><div class="kpi-label" style="color:${stockBajo>0?'#854d0e':'#666'};">Stock bajo/agotado</div><div class="kpi-value" style="color:${stockBajo>0?'#854d0e':'#333'};">${stockBajo}</div></div>
@@ -4520,9 +5080,13 @@ async function invRender() {
     const m2disp  = disp * (p.m2_placa || 0);
     const minimo  = p.stock_minimo_placas || 0;
     let badge, badgeStyle;
-    if (disp <= 0) {
-      badge = '🔴 Sin stock'; badgeStyle = 'background:#fee2e2;color:#991b1b;';
-    } else if (disp <= minimo) {
+    if (!p.enInventario) {
+      badge = '📋 Sin registro'; badgeStyle = 'background:#f5f5f3;color:#888;';
+    } else if (disp <= 0 && stock === 0 && trans === 0) {
+      badge = '⬜ Sin stock'; badgeStyle = 'background:#f5f5f3;color:#888;';
+    } else if (disp <= 0) {
+      badge = '🔴 Agotado'; badgeStyle = 'background:#fee2e2;color:#991b1b;';
+    } else if (minimo > 0 && disp <= minimo) {
       badge = '⚠️ Stock bajo'; badgeStyle = 'background:#fef9c3;color:#854d0e;';
     } else {
       badge = '✅ OK'; badgeStyle = 'background:#dcfce7;color:#166534;';
@@ -4534,11 +5098,11 @@ async function invRender() {
         ${p.ubicacion ? '<div style="font-size:11px;color:#bbb;">📍 '+p.ubicacion+'</div>' : ''}
       </td>
       <td style="padding:10px 12px;"><span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#f0f0ee;color:#555;">${p.categoria||'—'}</span></td>
-      <td style="padding:10px 12px;text-align:right;font-weight:600;">${stock.toFixed(1)} <span style="font-size:10px;color:#aaa;">pl</span></td>
+      <td style="padding:10px 12px;text-align:right;font-weight:600;color:${stock>0?'#333':'#ccc'};">${stock > 0 ? stock.toFixed(1)+' <span style="font-size:10px;color:#aaa;">pl</span>' : '—'}</td>
       <td style="padding:10px 12px;text-align:right;color:#dc2626;">${apart > 0 ? apart.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;">${disp.toFixed(1)} <span style="font-size:10px;color:#aaa;">pl</span></td>
+      <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:${disp>0?'#333':'#ccc'};">${disp > 0 ? disp.toFixed(1)+' <span style="font-size:10px;color:#aaa;">pl</span>' : '—'}</td>
       <td style="padding:10px 12px;text-align:right;color:#0284c7;">${trans > 0 ? trans.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;color:#555;">${p.m2_placa ? m2disp.toFixed(2)+' m²' : '—'}</td>
+      <td style="padding:10px 12px;text-align:right;color:#555;">${p.m2_placa && disp > 0 ? m2disp.toFixed(2)+' m²' : '—'}</td>
       <td style="padding:10px 12px;text-align:center;"><span style="font-size:11px;padding:3px 8px;border-radius:12px;${badgeStyle}">${badge}</span></td>
       <td style="padding:10px 12px;text-align:right;">
         <div style="display:flex;gap:6px;justify-content:flex-end;">
@@ -4566,10 +5130,18 @@ function invNuevoSKU() {
   document.getElementById('inv-sku-panel').style.display = '';
 }
 
-function invEditSKU(sku) {
-  const p = _invData.find(x => x.sku === sku);
+async function invEditSKU(sku) {
+  // Try inventory first, fall back to catalog
+  let p = _invData.find(x => x.sku === sku);
+  if (!p) {
+    const allProds = await getAllProducts();
+    const catProd = allProds.find(x => x.sku === sku);
+    if (catProd) {
+      p = { sku: catProd.sku, nombre: catProd.nombre, categoria: catProd.categoria, formato: catProd.descripcion || '' };
+    }
+  }
   if (!p) return;
-  document.getElementById('inv-sku-title').textContent = 'Editar SKU — ' + sku;
+  document.getElementById('inv-sku-title').textContent = 'Configurar SKU — ' + sku;
   document.getElementById('inv-sku-sku').value = p.sku;
   document.getElementById('inv-sku-sku').readOnly = true;
   document.getElementById('inv-sku-nombre').value = p.nombre || '';
@@ -4638,7 +5210,11 @@ function invCloseSKUPanel() {
 // ── Movimiento panel ──────────────────────────────────────────────────────────
 async function invOpenMovPanel(sku) {
   _invMovSku = sku;
-  const p = _invData.find(x => x.sku === sku);
+  let p = _invData.find(x => x.sku === sku);
+  if (!p) {
+    const allProds = await getAllProducts();
+    p = allProds.find(x => x.sku === sku);
+  }
   document.getElementById('inv-mov-title').textContent = (p ? p.nombre : sku) + ' — Registrar movimiento';
   document.getElementById('inv-mov-tipo').value   = 'entrada';
   document.getElementById('inv-mov-placas').value = '';
