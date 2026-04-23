@@ -58,8 +58,19 @@
     const now = new Date();
     const ym = now.getFullYear().toString() + String(now.getMonth()+1).padStart(2,'0');
     const { data } = await _sb.from('cotizaciones').select('num').ilike('num', `COT-${ym}-%`);
-    const n = (data || []).length + 1;
-    return `COT-${ym}-${String(n).padStart(3,'0')}`;
+    const nums = (data || []).map(c => {
+      const parts = (c.num || '').split('-');
+      return parseInt(parts[parts.length - 1]) || 0;
+    });
+    // Also consider the number currently shown in the form (not yet saved)
+    const currentInForm = document.getElementById('cotNum');
+    if (currentInForm && currentInForm.value) {
+      const parts = currentInForm.value.split('-');
+      const n = parseInt(parts[parts.length - 1]) || 0;
+      nums.push(n);
+    }
+    const max = nums.length ? Math.max(...nums) : 0;
+    return `COT-${ym}-${String(max + 1).padStart(3,'0')}`;
   }
 
   // ── Custom Products ──────────────────────────────────────────────────────────
@@ -621,6 +632,38 @@
   .conv-client-meta { font-size: 12px; color: #999; margin-top: 2px; }
   .conv-client-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
+  /* ─── AUTOCOMPLETE DROPDOWN ─── */
+  .ac-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #e0e0de;
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 9999;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    margin-top: 2px;
+  }
+  .ac-item {
+    padding: 9px 13px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid #f5f5f3;
+    color: #1a1a1a;
+  }
+  .ac-item:last-child { border-bottom: none; }
+  .ac-item:hover { background: #f5f5f3; }
+  .ac-item.ac-add {
+    color: #2563eb;
+    font-weight: 600;
+    font-size: 12px;
+    background: #f0f7ff;
+  }
+  .ac-item.ac-add:hover { background: #dbeafe; }
+
   /* ─── NOTIFICATIONS ─── */
   .notif {
     position: fixed;
@@ -785,13 +828,21 @@
             <label>Proyecto</label>
             <input type="text" id="cotProyecto" placeholder="Nombre del proyecto">
           </div>
-          <div class="form-group">
+          <div class="form-group" style="position:relative;">
             <label>Vendedor</label>
-            <input type="text" id="cotVendedor" placeholder="Nombre del vendedor">
+            <input type="text" id="cotVendedor" placeholder="Nombre del vendedor" autocomplete="off"
+              oninput="acFilter('cotVendedor','ac-vendedor')"
+              onfocus="acOpen('cotVendedor','ac-vendedor')"
+              onblur="acClose('ac-vendedor')">
+            <div id="ac-vendedor" class="ac-dropdown" style="display:none;"></div>
           </div>
-          <div class="form-group">
+          <div class="form-group" style="position:relative;">
             <label>Lugar</label>
-            <input type="text" id="cotLugar" placeholder="Ciudad / Lugar">
+            <input type="text" id="cotLugar" placeholder="Ciudad / Lugar" autocomplete="off"
+              oninput="acFilter('cotLugar','ac-lugar')"
+              onfocus="acOpen('cotLugar','ac-lugar')"
+              onblur="acClose('ac-lugar')">
+            <div id="ac-lugar" class="ac-dropdown" style="display:none;"></div>
           </div>
           <div class="form-group">
             <label>Status</label>
@@ -2513,6 +2564,105 @@ function setPagoPreset(key) {
   if (key === 'personalizado') document.getElementById('cotPago').focus();
 }
 
+// =====================================================================
+// AUTOCOMPLETE: VENDEDOR & LUGAR
+// =====================================================================
+let _acVendedores = null;
+let _acLugares = null;
+
+async function acLoadOptions() {
+  if (_acVendedores && _acLugares) return;
+  const h = await getHistory();
+  _acVendedores = [...new Set(h.map(c => c.vendedor).filter(Boolean))].sort();
+  _acLugares    = [...new Set(h.map(c => c.lugar).filter(Boolean))].sort();
+}
+
+function acInvalidate() {
+  _acVendedores = null;
+  _acLugares = null;
+}
+
+function acGetList(inputId) {
+  if (inputId === 'cotVendedor') return _acVendedores || [];
+  if (inputId === 'cotLugar')    return _acLugares    || [];
+  return [];
+}
+
+async function acOpen(inputId, dropId) {
+  await acLoadOptions();
+  acRender(inputId, dropId, document.getElementById(inputId).value.trim());
+}
+
+function acFilter(inputId, dropId) {
+  const q = document.getElementById(inputId).value.trim();
+  acRender(inputId, dropId, q);
+}
+
+function acRender(inputId, dropId, q) {
+  const dd = document.getElementById(dropId);
+  if (!dd) return;
+  const list = acGetList(inputId);
+  const ql = q.toLowerCase();
+  const filtered = q
+    ? list.filter(v => v.toLowerCase().includes(ql))
+    : list;
+
+  const label = inputId === 'cotVendedor' ? 'vendedor' : 'ciudad';
+  let html = '';
+
+  filtered.forEach(v => {
+    html += `<div class="ac-item" onmousedown="acSelect('${inputId}','${dropId}','${v.replace(/'/g,"&#39;")}')">${v}</div>`;
+  });
+
+  // Show "Agregar nuevo" only if typed value is not already in list
+  const exactMatch = list.some(v => v.toLowerCase() === ql);
+  if (q && !exactMatch) {
+    html += `<div class="ac-item ac-add" onmousedown="acAddNew('${inputId}','${dropId}','${q.replace(/'/g,"&#39;")}')">➕ Agregar "${q}" como nuevo ${label}</div>`;
+  } else if (!q) {
+    html += `<div class="ac-item ac-add" onmousedown="acPromptNew('${inputId}','${dropId}','${label}')">➕ Agregar nuevo ${label}...</div>`;
+  }
+
+  if (!html) html = `<div class="ac-item" style="color:#aaa;cursor:default;">Sin resultados</div>`;
+  dd.innerHTML = html;
+  dd.style.display = 'block';
+}
+
+function acSelect(inputId, dropId, value) {
+  document.getElementById(inputId).value = value;
+  document.getElementById(dropId).style.display = 'none';
+}
+
+function acAddNew(inputId, dropId, value) {
+  // Value already typed — just confirm & persist to options list
+  if (inputId === 'cotVendedor') {
+    if (_acVendedores && !_acVendedores.includes(value)) _acVendedores.push(value);
+  } else {
+    if (_acLugares && !_acLugares.includes(value)) _acLugares.push(value);
+  }
+  document.getElementById(inputId).value = value;
+  document.getElementById(dropId).style.display = 'none';
+}
+
+function acPromptNew(inputId, dropId, label) {
+  const val = prompt(`Nuevo ${label}:`);
+  if (!val || !val.trim()) return;
+  const clean = val.trim();
+  if (inputId === 'cotVendedor') {
+    if (_acVendedores && !_acVendedores.includes(clean)) _acVendedores.push(clean);
+  } else {
+    if (_acLugares && !_acLugares.includes(clean)) _acLugares.push(clean);
+  }
+  document.getElementById(inputId).value = clean;
+  document.getElementById(dropId).style.display = 'none';
+}
+
+function acClose(dropId) {
+  setTimeout(() => {
+    const dd = document.getElementById(dropId);
+    if (dd) dd.style.display = 'none';
+  }, 200);
+}
+
 async function initForm() {
   const t = today();
   document.getElementById('cotNum').value = await getNextCotNum();
@@ -2880,12 +3030,18 @@ async function saveCot() {
   const data = buildCotData();
   if (!data.cliente) { notify('Ingresa el nombre del cliente', 'error'); return; }
   if (data.items.length === 0) { notify('Agrega al menos un producto', 'error'); return; }
+
+  // If this is a NEW cotización (not editing an existing one), re-generate the number
+  // right before saving to avoid collisions from concurrent users or multiple "Nueva" clicks
   if (!editingId) {
-    editingId = data.num;
-    document.getElementById('cotNum').value = data.num;
+    const safeNum = await getNextCotNum();
+    data.num = safeNum;
+    editingId = safeNum;
+    document.getElementById('cotNum').value = safeNum;
   }
+
   const ok = await saveHistory_single(data);
-  if (ok) notify('Cotización guardada correctamente ✓', 'success');
+  if (ok) { notify('Cotización guardada correctamente ✓', 'success'); acInvalidate(); }
   else notify('Error al guardar en base de datos', 'error');
 }
 
