@@ -2474,6 +2474,26 @@ function fdate(str) {
 // =====================================================================
 let rows = [];
 let editingId = null;
+let _invCacheForCot = []; // cache de inventario para el cotizador — se refresca al abrir Nueva Cotización
+
+async function invGetCacheForCot() {
+  if (!_invCacheForCot.length) {
+    const { data } = await _sb.from('inventario').select('sku,stock_placas,apartado_placas,transito_placas');
+    _invCacheForCot = data || [];
+  }
+  return _invCacheForCot;
+}
+
+function invStockBadgeForSku(sku, qty, invCache) {
+  const rec = invCache.find(p => p.sku === sku);
+  if (!rec) return '';
+  const disp = Math.max(0, (rec.stock_placas || 0) - (rec.apartado_placas || 0));
+  const trans = rec.transito_placas || 0;
+  if (disp <= 0 && trans > 0) return `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#e0f2fe;color:#0369a1;margin-left:4px;">🚢 ${trans.toFixed(0)} en tránsito</span>`;
+  if (disp <= 0) return `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#fee2e2;color:#991b1b;margin-left:4px;">🔴 Sin stock</span>`;
+  if (qty && disp < qty) return `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#fef9c3;color:#854d0e;margin-left:4px;">⚠️ ${disp.toFixed(0)} disp.</span>`;
+  return `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#dcfce7;color:#166534;margin-left:4px;">✅ ${disp.toFixed(0)} disp.</span>`;
+}
 let _rowIdCtr = 1;
 
 // getNextCotNum → async, defined in <head> via Supabase
@@ -2535,6 +2555,14 @@ function renderRows() {
   tbody.innerHTML = '';
   rows.forEach(row => tbody.appendChild(buildRow(row)));
   recalc();
+  // Populate stock badges asynchronously after render
+  invGetCacheForCot().then(invCache => {
+    rows.forEach(row => {
+      if (!row.product || row.product.categoria === 'COMPLEMENTOS') return;
+      const badgeEl = document.getElementById('inv-badge-' + row.id);
+      if (badgeEl) badgeEl.innerHTML = invStockBadgeForSku(row.product.sku, row.qty, invCache);
+    });
+  });
 }
 
 function getRowPrice(row) {
@@ -2644,6 +2672,7 @@ function buildRow(row) {
           oninput="onSearch(this,${id})" onfocus="onSearchFocus(this,${id})" onblur="hideDropdown(${id})" autocomplete="off">
         <div class="search-dropdown" id="dd-${id}" style="display:none;"></div>
       </div>
+      ${p && p.categoria !== 'COMPLEMENTOS' ? `<div id="inv-badge-${id}" style="margin-top:3px;"></div>` : ''}
     </td>
     <td>${p ? `<span class="cat-badge cat-${catKey}">${p.categoria}</span>` : ''}</td>
     <td style="white-space:nowrap;font-size:12px;">${p ? p.descripcion : ''}</td>
@@ -2663,7 +2692,17 @@ function buildRow(row) {
 
 function updateQty(id, val) {
   const row = rows.find(r => r.id === Number(id));
-  if (row) { row.qty = Math.max(0, Math.round(parseFloat(val) || 0)); recalc(); }
+  if (row) {
+    row.qty = Math.max(0, Math.round(parseFloat(val) || 0));
+    recalc();
+    // Refresh stock badge with new qty
+    if (row.product && row.product.categoria !== 'COMPLEMENTOS') {
+      invGetCacheForCot().then(invCache => {
+        const badgeEl = document.getElementById('inv-badge-' + id);
+        if (badgeEl) badgeEl.innerHTML = invStockBadgeForSku(row.product.sku, row.qty, invCache);
+      });
+    }
+  }
 }
 
 function updateDisc(id, val) {
@@ -2712,6 +2751,7 @@ async function onSearch(input, rowId) {
   dd.style.top = (rect.bottom + window.scrollY) + 'px';
   dd.style.left = (rect.left + window.scrollX) + 'px';
   const AP = await getAllProducts();
+  const invCache = await invGetCacheForCot();
   const all = q.length < 1
     ? AP.slice(0, 40)
     : AP.filter(p => p.nombre.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)).slice(0, 40);
@@ -2721,11 +2761,14 @@ async function onSearch(input, rowId) {
     dd.innerHTML = `<div class="search-empty">Sin resultados para "${q}"</div>`;
   } else {
     const countMsg = `<div class="search-count">${total > all.length ? `Mostrando ${all.length} de ${total}` : `${total} resultado${total!==1?'s':''}`}</div>`;
-    dd.innerHTML = countMsg + all.map(p => `
+    dd.innerHTML = countMsg + all.map(p => {
+      const stockBadge = p.categoria !== 'COMPLEMENTOS' ? invStockBadgeForSku(p.sku, null, invCache) : '';
+      return `
       <div class="search-item" onmousedown="selectProduct(${rowId},'${p.sku}')">
-        <div class="s-name">${p.nombre} <span style="font-weight:400;color:#aaa;font-size:11px;">— ${p.descripcion}</span></div>
+        <div class="s-name">${p.nombre} <span style="font-weight:400;color:#aaa;font-size:11px;">— ${p.descripcion}</span>${stockBadge}</div>
         <div class="s-meta">${p.categoria} &bull; ${p.marca} &bull; <code style="font-size:10px;">${p.sku}</code> &bull; <strong>${fmx(p.precio)}</strong>/placa</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
   dd.style.display = 'block';
 }
@@ -3098,6 +3141,7 @@ async function switchView(v) {
   if (v === 'convenio') renderConvenioList();
   if (v === 'inventario') invRender();
   if (v === 'contenedores') contRender();
+  if (v === 'nueva') { _invCacheForCot = []; invGetCacheForCot(); }
 }
 
 
