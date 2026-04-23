@@ -19,6 +19,8 @@
     return data || [];
   }
   async function saveHistory_single(cotData) {
+    // rows is JSONB — store as wrapper object to carry extra fields
+    // without requiring new DB columns
     const payload = {
       num: cotData.num,
       fecha: cotData.fecha,
@@ -34,8 +36,12 @@
       dias_entrega: parseInt(cotData.diasEntrega) || 0,
       validez: parseInt(cotData.validez) || 30,
       descuento_global: cotData.globalDisc || 0,
-      sin_iva: cotData.sinIva || false,
-      notas: cotData.notas || '',
+      notas: JSON.stringify({
+        texto: cotData.notas || '',
+        lugar: cotData.lugar || '',
+        vence: cotData.vence || '',
+        sinIva: cotData.sinIva || false
+      }),
       rows: cotData.items || [],
       complementos: cotData.complementos || [],
       subtotal: cotData.subtotal || 0,
@@ -3069,14 +3075,28 @@ async function loadCot(num) {
   const h = await getHistory();
   const cot = h.find(c => c.num === num);
   if (!cot) return;
+
+  // Parse notas — may be JSON wrapper {texto, lugar, vence, sinIva} or plain string
+  let notasMeta = {};
+  try {
+    const raw = cot.notas || cot.condiciones_notas || '';
+    if (typeof raw === 'string' && raw.startsWith('{')) {
+      notasMeta = JSON.parse(raw);
+    }
+  } catch(e) {}
+  const metaLugar  = notasMeta.lugar  || cot.lugar  || '';
+  const metaVence  = notasMeta.vence  || cot.vence  || '';
+  const metaSinIva = notasMeta.sinIva !== undefined ? notasMeta.sinIva : (cot.sinIva || cot.sin_iva || false);
+  const notasTexto = notasMeta.texto  !== undefined ? notasMeta.texto  : (typeof cot.notas === 'string' && !cot.notas.startsWith('{') ? cot.notas : '');
+
   editingId = cot.num;
   document.getElementById('cotNum').value = cot.num;
   document.getElementById('cotFecha').value = cot.fecha || '';
-  document.getElementById('cotVence').value = cot.vence || cot.validez || '';
+  document.getElementById('cotVence').value = metaVence || cot.validez || '';
   document.getElementById('cotCliente').value = cot.cliente || '';
   document.getElementById('cotProyecto').value = cot.proyecto || '';
   document.getElementById('cotVendedor').value = cot.vendedor || '';
-  document.getElementById('cotLugar').value = cot.lugar || '';
+  document.getElementById('cotLugar').value = metaLugar;
   document.getElementById('cotPago').value = cot.pago || cot.condiciones_pago || '';
   const savedDisc = cot.globalDisc ?? cot.descuento_global ?? 0;
   document.getElementById('globalDisc').value = savedDisc;
@@ -3089,9 +3109,9 @@ async function loadCot(num) {
   document.getElementById('cotStatus').value = cot.status || 'Pendiente';
   document.getElementById('cotTipoCliente').value = cot.tipoCliente || cot.tipo_cliente || '';
   const ivaToggleEl = document.getElementById('ivaToggle');
-  if (ivaToggleEl) ivaToggleEl.checked = !(cot.sinIva || cot.sin_iva);
+  if (ivaToggleEl) ivaToggleEl.checked = !metaSinIva;
   const ivaRowEl = document.getElementById('ivaRow');
-  if (ivaRowEl) ivaRowEl.style.display = (cot.sinIva || cot.sin_iva) ? 'none' : '';
+  if (ivaRowEl) ivaRowEl.style.display = metaSinIva ? 'none' : '';
   _rowIdCtr = 1;
   const items = cot.items || cot.rows || [];
   rows = items.map(item => ({
@@ -3315,8 +3335,9 @@ async function getHistById(num) {
     pago:        cot.pago        || cot.condiciones_pago  || '',
     globalDisc:  cot.globalDisc  ?? cot.descuento_global  ?? 0,
     tipoCliente: cot.tipoCliente || cot.tipo_cliente      || '',
-    lugar:       cot.lugar       || '',
-    vence:       cot.vence       || '',
+    lugar:       (() => { try { const n = cot.notas; if (typeof n === 'string' && n.startsWith('{')) return JSON.parse(n).lugar || ''; } catch(e){} return cot.lugar || ''; })(),
+    vence:       (() => { try { const n = cot.notas; if (typeof n === 'string' && n.startsWith('{')) return JSON.parse(n).vence || ''; } catch(e){} return cot.vence || ''; })(),
+    sinIva:      (() => { try { const n = cot.notas; if (typeof n === 'string' && n.startsWith('{')) return JSON.parse(n).sinIva || false; } catch(e){} return false; })(),
   };
 }
 
