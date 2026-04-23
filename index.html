@@ -3835,8 +3835,36 @@ function convenioUpdatePrecio(idx, val) {
   if (!convProductos[idx]) return;
   const v = parseFloat(val);
   convProductos[idx].precioConvenio = isNaN(v) || v < 0 ? 0 : v;
-  // Re-render only the placa display and badge without full redraw
-  convenioRenderTabla();
+  // Update only the badge and placa display without re-rendering the whole table
+  const p = convProductos[idx];
+  const isSint = p.cat === 'SINTERED STONE';
+  const m2pp = p.m2 || null;
+  const placaConv = (isSint && m2pp && p.precioConvenio) ? p.precioConvenio * m2pp : null;
+  const descPct = (p.precioPublico > 0 && p.precioConvenio > 0)
+    ? Math.round((1 - p.precioConvenio / p.precioPublico) * 100) : 0;
+  // Update badge next to the input
+  const input = document.querySelector(`.conv-precio-input[oninput="convenioUpdatePrecio(${idx}, this.value)"]`);
+  if (input) {
+    const badge = input.parentElement.querySelector('.conv-descuento-badge');
+    if (descPct > 0) {
+      if (badge) badge.textContent = '-' + descPct + '%';
+      else {
+        const b = document.createElement('span');
+        b.className = 'conv-descuento-badge';
+        b.textContent = '-' + descPct + '%';
+        input.parentElement.appendChild(b);
+      }
+    } else if (badge) badge.remove();
+    // Update placa display in same row
+    const row = input.closest('tr');
+    if (row) {
+      const placaCell = row.cells[row.cells.length - 2];
+      if (placaCell) {
+        if (placaConv) placaCell.innerHTML = '<span class="conv-placa-display">' + fmx(placaConv) + '</span>';
+        else placaCell.innerHTML = '—';
+      }
+    }
+  }
 }
 
 function convenioQuitarProducto(idx) {
