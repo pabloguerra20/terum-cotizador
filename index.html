@@ -768,6 +768,10 @@
       <span class="nav-icon">📦</span>
       <span class="nav-label">Inventario</span>
     </button>
+    <button class="nav-tab" onclick="switchView('invdashboard')" title="Dashboard de Inventario">
+      <span class="nav-icon">📈</span>
+      <span class="nav-label">Dashboard Inv.</span>
+    </button>
     <button class="nav-tab" onclick="switchView('contenedores')" title="Contenedores">
       <span class="nav-icon">🚢</span>
       <span class="nav-label">Contenedores</span>
@@ -1825,7 +1829,7 @@
                 <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Apartado</th>
                 <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Disponible</th>
                 <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">En Tránsito</th>
-                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">M² Disp.</th>
+                <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">M²/Placa</th>
                 <th style="padding:10px 12px;text-align:center;font-weight:600;color:#555;">Estado</th>
                 <th style="padding:10px 12px;text-align:right;font-weight:600;color:#555;">Acciones</th>
               </tr>
@@ -1946,6 +1950,34 @@
         </div>
       </div>
     </div><!-- /#view-inventario -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         DASHBOARD DE INVENTARIO
+    ═══════════════════════════════════════════════════════════════ -->
+    <div id="view-invdashboard" class="view">
+      <div id="invdash-container" style="display:flex;flex-direction:column;gap:20px;">
+        <!-- Bloque 1: Valor del inventario -->
+        <div id="invdash-valor"></div>
+        <!-- Bloque 2: Productos más cotizados / vendidos -->
+        <div id="invdash-top"></div>
+        <!-- Bloque 3: Rotación y salud -->
+        <div id="invdash-rotacion"></div>
+        <!-- Bloque 4: Tránsito activo -->
+        <div id="invdash-transito"></div>
+        <!-- Bloque 5: Cobertura de stock -->
+        <div id="invdash-cobertura"></div>
+        <!-- Bloque 6: SKUs cotizados sin inventario -->
+        <div id="invdash-sininv"></div>
+        <!-- Bloque 7: Tasa de conversión por producto -->
+        <div id="invdash-conversion"></div>
+        <!-- Bloque 8: Movimientos recientes (al final) -->
+        <div id="invdash-movs"></div>
+        <div id="invdash-empty" style="display:none;padding:60px;text-align:center;color:#bbb;">
+          <div style="font-size:32px;margin-bottom:12px;">📊</div>
+          <div style="font-size:15px;">Cargando datos...</div>
+        </div>
+      </div>
+    </div><!-- /#view-invdashboard -->
 
     <!-- ═══════════════════════════════════════════════════════════════
          CONTENEDORES
@@ -2590,7 +2622,14 @@ async function acLoadOptions() {
   if (_acVendedores && _acLugares) return;
   const h = await getHistory();
   _acVendedores = [...new Set(h.map(c => c.vendedor).filter(Boolean))].sort();
-  _acLugares    = [...new Set(h.map(c => c.lugar).filter(Boolean))].sort();
+  _acLugares = [...new Set(h.map(c => {
+    // lugar vive en notas JSON o en cot.lugar (retrocompatibilidad)
+    try {
+      const n = c.notas || '';
+      if (typeof n === 'string' && n.startsWith('{')) return JSON.parse(n).lugar || '';
+    } catch(e) {}
+    return c.lugar || '';
+  }).filter(Boolean))].sort();
 }
 
 function acInvalidate() {
@@ -3180,6 +3219,616 @@ async function newCot() {
 }
 
 // =====================================================================
+// DASHBOARD DE INVENTARIO
+// =====================================================================
+async function renderInvDashboard() {
+  const [invData, historial, allProds, allMovsResult] = await Promise.all([
+    invLoad(),
+    getHistory(),
+    getAllProducts(),
+    _sb.from('inventario_movimientos').select('*').order('created_at', { ascending: false }).limit(500)
+  ]);
+  const allMovs = allMovsResult.data || [];
+
+  const catMap   = {};
+  const precioMap = {};
+  const m2Map    = {};
+  allProds.forEach(p => {
+    catMap[p.sku]    = p.categoria  || '';
+    precioMap[p.sku] = p.precio     || 0;
+    // Fallback m2 desde descripción del catálogo (parseo de dimensiones)
+    if (p.descripcion) {
+      const d = parseDims(p.descripcion);
+      if (d) m2Map[p.sku] = (d.largo * d.ancho) / 10000;
+    }
+  });
+  // Inventario sobreescribe con el valor registrado manualmente (más preciso)
+  invData.forEach(p => {
+    if (p.m2_placa && p.m2_placa > 0) m2Map[p.sku] = p.m2_placa;
+  });
+
+  const fmxL = n => '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const fm2L = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  const CAT_M2 = ['PORCELAIN', 'ESTERNI', 'SEMPLICE'];
+  const CAT_COLORS = {
+    'SINTERED STONE': '#1A3A4A',
+    'PORCELAIN':      '#2563eb',
+    'ESTERNI':        '#059669',
+    'SEMPLICE':       '#7c3aed',
+    'COMPLEMENTOS':   '#b45309'
+  };
+
+  // ── BLOQUE 1: Valor del inventario ──────────────────────────────────
+  const dispOf = p => Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+
+  let valorTotal = 0;
+  let valorTransito = 0;
+  const valorPorCat = {};
+
+  invData.forEach(p => {
+    const precio = precioMap[p.sku] || 0;
+    const disp   = dispOf(p);
+    const trans  = p.transito_placas || 0;
+    const m2pp   = p.m2_placa || 0;
+    const cat    = p.categoria || 'OTROS';
+    const isM2   = CAT_M2.includes(cat);
+
+    // Valor = placas × precio/placa (precio en catálogo ya es por placa para todos)
+    const vDisp  = disp  * precio;
+    const vTrans = trans * precio;
+
+    valorTotal    += vDisp;
+    valorTransito += vTrans;
+
+    if (!valorPorCat[cat]) valorPorCat[cat] = { valor: 0, placas: 0, m2: 0 };
+    valorPorCat[cat].valor  += vDisp;
+    valorPorCat[cat].placas += disp;
+    valorPorCat[cat].m2     += disp * m2pp;
+  });
+
+  const catRows = Object.entries(valorPorCat)
+    .sort((a,b) => b[1].valor - a[1].valor)
+    .map(([cat, d]) => {
+      const isM2 = CAT_M2.includes(cat);
+      const stock = isM2
+        ? fm2L(d.m2) + ' m²'
+        : d.placas.toFixed(0) + ' pl';
+      const pct = valorTotal > 0 ? (d.valor / valorTotal * 100).toFixed(1) : '0';
+      const color = CAT_COLORS[cat] || '#999';
+      return '<tr style="border-bottom:1px solid #f5f5f3;">'
+        +'<td style="padding:10px 12px;display:flex;align-items:center;gap:8px;">'
+          +'<span style="width:8px;height:8px;border-radius:2px;background:'+color+';display:inline-block;flex-shrink:0;"></span>'
+          +'<span style="font-size:13px;font-weight:600;">'+cat+'</span>'
+        +'</td>'
+        +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#666;">'+stock+'</td>'
+        +'<td style="padding:10px 12px;text-align:right;font-size:13px;font-weight:700;">'+fmxL(d.valor)+'</td>'
+        +'<td style="padding:10px 12px;text-align:right;">'
+          +'<div style="display:flex;align-items:center;gap:6px;justify-content:flex-end;">'
+            +'<div style="width:80px;height:5px;background:#f0f0ee;border-radius:3px;overflow:hidden;">'
+              +'<div style="width:'+pct+'%;height:100%;background:'+color+';border-radius:3px;"></div>'
+            +'</div>'
+            +'<span style="font-size:11px;color:#bbb;width:36px;text-align:right;">'+pct+'%</span>'
+          +'</div>'
+        +'</td>'
+      +'</tr>';
+    }).join('');
+
+  document.getElementById('invdash-valor').innerHTML =
+    '<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:16px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">💰 Valor del Inventario</div>'
+        +'<div style="display:flex;gap:20px;flex-wrap:wrap;">'
+          +'<div style="text-align:right;">'
+            +'<div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Valor disponible</div>'
+            +'<div style="font-size:22px;font-weight:800;color:#1a1a1a;">'+fmxL(valorTotal)+'</div>'
+          +'</div>'
+          +(valorTransito>0?'<div style="text-align:right;">'
+            +'<div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">En tránsito</div>'
+            +'<div style="font-size:22px;font-weight:800;color:#0284c7;">'+fmxL(valorTransito)+'</div>'
+          +'</div>':'')
+          +'<div style="text-align:right;">'
+            +'<div style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Total inventario</div>'
+            +'<div style="font-size:22px;font-weight:800;color:#555;">'+fmxL(valorTotal+valorTransito)+'</div>'
+          +'</div>'
+        +'</div>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        +'<thead><tr style="background:#fafaf8;">'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Categoría</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Stock disp.</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Valor</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">% del total</th>'
+        +'</tr></thead>'
+        +'<tbody>'+catRows+'</tbody>'
+      +'</table>'
+    +'</div>';
+
+  // ── BLOQUE 2: Productos más cotizados / vendidos ─────────────────────
+  const skuCotMap  = {}; // todas las cotizaciones
+  const skuVentMap = {}; // solo cerradas/entregadas
+
+  historial.forEach(cot => {
+    const items = cot.items || cot.rows || [];
+    const isVenta = ['Cerrada','Entregada'].includes(cot.status);
+    items.forEach(item => {
+      if (!item.product) return;
+      const sku   = item.product.sku;
+      const nom   = item.product.nombre || sku;
+      const cat   = item.product.categoria || '';
+      const qty   = item.qty || 0;
+      const m2pp  = m2Map[sku] || 0;
+      if (!skuCotMap[sku]) skuCotMap[sku] = { sku, nom, cat, veces: 0, qty: 0, m2: 0 };
+      skuCotMap[sku].veces++;
+      skuCotMap[sku].qty += qty;
+      skuCotMap[sku].m2  += qty * m2pp;
+
+      if (isVenta) {
+        if (!skuVentMap[sku]) skuVentMap[sku] = { sku, nom, cat, veces: 0, qty: 0, m2: 0 };
+        skuVentMap[sku].veces++;
+        skuVentMap[sku].qty += qty;
+        skuVentMap[sku].m2  += qty * m2pp;
+      }
+    });
+  });
+
+  const topN = 8;
+  const buildTopTable = (map, label) => {
+    const sorted = Object.values(map).sort((a,b) => b.veces - a.veces).slice(0, topN);
+    if (!sorted.length) return '<div style="padding:24px;text-align:center;color:#bbb;font-size:13px;">Sin datos aún</div>';
+    return '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+      +'<thead><tr style="background:#fafaf8;">'
+        +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">#</th>'
+        +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+        +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Veces</th>'
+        +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Volumen</th>'
+
+      +'</tr></thead>'
+      +'<tbody>'
+      + sorted.map((p, i) => {
+          const isM2  = CAT_M2.includes(p.cat);
+          const vol   = isM2 ? fm2L(p.m2)+' m²' : p.qty.toFixed(0)+' pl';
+          const color = CAT_COLORS[p.cat] || '#999';
+          return '<tr style="border-bottom:1px solid #f5f5f3;" onmouseover="this.style.background=\'#fafaf8\'" onmouseout="this.style.background=\'\'">'
+            +'<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#bbb;">'+(i+1)+'</td>'
+            +'<td style="padding:10px 12px;">'
+              +'<div style="font-size:13px;font-weight:600;color:#1a1a1a;">'+p.nom+'</div>'
+              +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.cat+'</span>'
+            +'</td>'
+            +'<td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;">'+p.veces+'</td>'
+            +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#555;">'+vol+'</td>'
+
+          +'</tr>';
+        }).join('')
+      +'</tbody>'
+    +'</table>';
+  };
+
+  document.getElementById('invdash-top').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+
+      // Más cotizados
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+        +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+          +'<div style="font-size:13px;font-weight:700;color:#333;">🔥 Más cotizados</div>'
+          +'<span style="font-size:11px;color:#bbb;">todas las cotizaciones</span>'
+        +'</div>'
+        + buildTopTable(skuCotMap, 'cotizados')
+      +'</div>'
+
+      // Más vendidos
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+        +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+          +'<div style="font-size:13px;font-weight:700;color:#333;">✅ Más vendidos</div>'
+          +'<span style="font-size:11px;color:#bbb;">solo cerradas / entregadas</span>'
+        +'</div>'
+        + buildTopTable(skuVentMap, 'vendidos')
+      +'</div>'
+
+    +'</div>';
+
+  // ── BLOQUE 3: Movimientos recientes ───────────────────────────────────
+  // Reutiliza allMovs cargado al inicio — sin segunda query a Supabase
+  const movs    = allMovs;
+  const movErr  = false;
+
+  const tipoMeta = {
+    entrada:          { label: 'Entrada',          color: '#16a34a', bg: '#dcfce7', icon: '\u2B07' },
+    salida:           { label: 'Salida',            color: '#dc2626', bg: '#fee2e2', icon: '\u2B06' },
+    apartado:         { label: 'Apartado',          color: '#f59e0b', bg: '#fef9c3', icon: '\uD83D\uDD12' },
+    liberado:         { label: 'Liberado',          color: '#0284c7', bg: '#e0f2fe', icon: '\uD83D\uDD13' },
+    transito_entrada: { label: 'Tránsito in',       color: '#7c3aed', bg: '#ede9fe', icon: '\uD83D\uDEA2' },
+    transito_llegada: { label: 'Llegó a bodega',    color: '#059669', bg: '#d1fae5', icon: '\uD83C\uDFED' },
+    ajuste:           { label: 'Ajuste',            color: '#6b7280', bg: '#f3f4f6', icon: '\u2696' }
+  };
+
+  const movRows = movErr || !movs?.length
+    ? '<tr><td colspan="6" style="padding:32px;text-align:center;color:#bbb;">Sin movimientos registrados</td></tr>'
+    : movs.slice(0,30).map(m => {
+        const meta   = tipoMeta[m.tipo] || { label: m.tipo, color:'#999', bg:'#f5f5f3', icon:'\u25CB' };
+        const invP   = invData.find(p => p.sku === m.sku);
+        const nombre = invP?.nombre || m.sku;
+        const vol    = m.m2 && m.m2 > 0 ? fm2L(m.m2)+' m²' : (m.placas||0).toFixed(0)+' pl';
+        const fecha  = m.fecha || (m.created_at ? m.created_at.slice(0,10) : '—');
+        return '<tr style="border-bottom:1px solid #f5f5f3;" onmouseover="this.style.background=\'#fafaf8\'" onmouseout="this.style.background=\'\'">'
+          +'<td style="padding:10px 12px;">'
+            +'<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:'+meta.bg+';color:'+meta.color+';">'+meta.icon+' '+meta.label+'</span>'
+          +'</td>'
+          +'<td style="padding:10px 12px;">'
+            +'<div style="font-size:13px;font-weight:600;">'+nombre+'</div>'
+            +'<div style="font-size:11px;color:#aaa;font-family:monospace;">'+m.sku+'</div>'
+          +'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;">'+vol+'</td>'
+          +'<td style="padding:10px 12px;font-size:12px;color:#555;">'+(m.cliente||'—')+'</td>'
+          +'<td style="padding:10px 12px;font-size:12px;color:#aaa;font-family:monospace;">'+(m.referencia||'—')+'</td>'
+          +'<td style="padding:10px 12px;font-size:11px;color:#bbb;text-align:right;">'+fecha+'</td>'
+        +'</tr>';
+      }).join('');
+
+  document.getElementById('invdash-movs').innerHTML =
+    '<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">📋 Movimientos recientes</div>'
+        +'<span style="font-size:11px;color:#bbb;">últimos 30 movimientos globales</span>'
+      +'</div>'
+      +'<div style="overflow-x:auto;">'
+        +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+          +'<thead><tr style="background:#fafaf8;">'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Tipo</th>'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Volumen</th>'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Cliente</th>'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Referencia</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Fecha</th>'
+          +'</tr></thead>'
+          +'<tbody>'+movRows+'</tbody>'
+        +'</table>'
+      +'</div>'
+    +'</div>';
+
+  // ── BLOQUE 4: Rotación y salud del stock ────────────────────────────
+  const hoy    = new Date();
+  const hace60 = new Date(hoy - 60 * 86400000);
+  const hace30 = new Date(hoy - 30 * 86400000);
+
+  // allMovs ya fue cargado al inicio — sin query adicional
+  const movsPorSku = {};
+  (allMovs || []).forEach(m => {
+    if (!movsPorSku[m.sku]) movsPorSku[m.sku] = [];
+    movsPorSku[m.sku].push(m);
+  });
+
+  // SKUs sin movimiento en 60 días (tienen stock pero sin actividad)
+  const sinMovimiento = invData.filter(p => {
+    const disp = Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+    if (disp <= 0) return false;
+    const movs = movsPorSku[p.sku] || [];
+    if (!movs.length) return true;
+    const ultimo = new Date(movs[0].created_at || movs[0].fecha);
+    return ultimo < hace60;
+  }).map(p => {
+    const movs = movsPorSku[p.sku] || [];
+    const ultimo = movs.length ? new Date(movs[0].created_at || movs[0].fecha) : null;
+    const dias = ultimo ? Math.floor((hoy - ultimo) / 86400000) : 999;
+    const disp = Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+    return { ...p, diasSinMov: dias, disp };
+  }).sort((a,b) => b.diasSinMov - a.diasSinMov).slice(0, 8);
+
+  // Top SKUs con más salidas en últimos 30 días
+  const salidasRecientes = {};
+  (allMovs || []).filter(m => {
+    const f = new Date(m.created_at || m.fecha);
+    return f >= hace30 && (m.tipo === 'salida' || m.tipo === 'apartado');
+  }).forEach(m => {
+    if (!salidasRecientes[m.sku]) salidasRecientes[m.sku] = { sku: m.sku, qty: 0, m2: 0, veces: 0 };
+    salidasRecientes[m.sku].qty   += m.placas || 0;
+    salidasRecientes[m.sku].m2    += m.m2     || 0;
+    salidasRecientes[m.sku].veces += 1;
+  });
+  const topSalidas = Object.values(salidasRecientes)
+    .sort((a,b) => b.qty - a.qty).slice(0, 8)
+    .map(s => {
+      const inv = invData.find(p => p.sku === s.sku);
+      return { ...s, nombre: inv?.nombre || s.sku, cat: inv?.categoria || '' };
+    });
+
+  const sinMovRows = sinMovimiento.length
+    ? sinMovimiento.map(p => {
+        const isM2  = CAT_M2.includes(p.categoria);
+        const vol   = isM2 ? (p.disp*(p.m2_placa||0)).toFixed(1)+' m²' : p.disp.toFixed(0)+' pl';
+        const color = p.diasSinMov > 120 ? '#dc2626' : p.diasSinMov > 90 ? '#f59e0b' : '#6b7280';
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;"><div style="font-size:13px;font-weight:600;">'+p.nombre+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.categoria+'</span></td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;">'+vol+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;"><span style="font-size:13px;font-weight:700;color:'+color+';">'+p.diasSinMov+' días</span></td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="3" style="padding:24px;text-align:center;color:#bbb;font-size:13px;">Sin SKUs estancados — buen ritmo de rotación</td></tr>';
+
+  const topSalidaRows = topSalidas.length
+    ? topSalidas.map((s, i) => {
+        const isM2 = CAT_M2.includes(s.cat);
+        const vol  = isM2 && s.m2 > 0 ? s.m2.toFixed(1)+' m²' : s.qty.toFixed(0)+' pl';
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#bbb;">'+(i+1)+'</td>'
+          +'<td style="padding:10px 12px;"><div style="font-size:13px;font-weight:600;">'+s.nombre+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+s.cat+'</span></td>'
+          +'<td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;">'+vol+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#555;">'+s.veces+' movs.</td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="4" style="padding:24px;text-align:center;color:#bbb;font-size:13px;">Sin salidas en los últimos 30 días</td></tr>';
+
+  document.getElementById('invdash-rotacion').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+        +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+          +'<div style="font-size:13px;font-weight:700;color:#333;">🧊 Inventario estancado</div>'
+          +'<span style="font-size:11px;color:#bbb;">sin movimiento +60 días · con stock</span>'
+        +'</div>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+          +'<thead><tr style="background:#fafaf8;">'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Stock disp.</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Sin movimiento</th>'
+          +'</tr></thead>'
+          +'<tbody>'+sinMovRows+'</tbody>'
+        +'</table>'
+      +'</div>'
+
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+        +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+          +'<div style="font-size:13px;font-weight:700;color:#333;">🚀 Más movimiento últimos 30 días</div>'
+          +'<span style="font-size:11px;color:#bbb;">salidas + apartados</span>'
+        +'</div>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+          +'<thead><tr style="background:#fafaf8;">'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">#</th>'
+            +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Volumen</th>'
+            +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Movs.</th>'
+          +'</tr></thead>'
+          +'<tbody>'+topSalidaRows+'</tbody>'
+        +'</table>'
+      +'</div>'
+
+    +'</div>';
+
+  // ── BLOQUE 5: Tránsito activo ────────────────────────────────────────
+  const enTransito = invData.filter(p => (p.transito_placas||0) > 0)
+    .sort((a,b) => (b.transito_placas||0) - (a.transito_placas||0));
+
+  const transitoRows = enTransito.length
+    ? enTransito.map(p => {
+        const isM2  = CAT_M2.includes(p.categoria);
+        const tr    = p.transito_placas || 0;
+        const m2tr  = tr * (p.m2_placa || 0);
+        const vol   = isM2 && m2tr > 0 ? m2tr.toFixed(1)+' m²' : tr.toFixed(0)+' pl';
+        const color = CAT_COLORS[p.categoria] || '#999';
+        // Get latest transito_entrada movement for reference/date
+        const movs  = (movsPorSku[p.sku] || []).filter(m => m.tipo === 'transito_entrada');
+        const ref   = movs[0]?.referencia || '—';
+        const nota  = movs[0]?.notas || '—';
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;">'
+            +'<div style="font-size:13px;font-weight:600;">'+p.nombre+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.categoria+'</span>'
+          +'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-weight:700;font-size:15px;color:#0284c7;">'+vol+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:12px;color:#aaa;font-family:monospace;">'+ref+'</td>'
+          +'<td style="padding:10px 12px;font-size:12px;color:#aaa;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+nota+'</td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="4" style="padding:32px;text-align:center;color:#bbb;">Sin productos en tránsito actualmente</td></tr>';
+
+  const totalTransitoVal = enTransito.reduce((s,p) => s + (p.transito_placas||0) * ((precioMap[p.sku]||0)), 0);
+
+  document.getElementById('invdash-transito').innerHTML =
+    '<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">🚢 Tránsito activo</div>'
+        +'<div style="display:flex;gap:16px;align-items:center;">'
+          +(enTransito.length ? '<span style="font-size:12px;color:#0284c7;font-weight:600;">'+enTransito.length+' SKUs en camino</span>' : '')
+        +'</div>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        +'<thead><tr style="background:#fafaf8;">'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">En tránsito</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Referencia</th>'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Notas</th>'
+        +'</tr></thead>'
+        +'<tbody>'+transitoRows+'</tbody>'
+      +'</table>'
+    +'</div>';
+
+  // ── BLOQUE 6: Cobertura de stock ─────────────────────────────────────
+  // Ritmo de ventas = salidas en últimos 30 días / 30 → placas/día
+  // Cobertura = stock disponible / ritmo_diario
+  const coberturaData = invData
+    .filter(p => Math.max(0,(p.stock_placas||0)-(p.apartado_placas||0)) > 0)
+    .map(p => {
+      const disp   = Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+      const salidas30 = (allMovs||[]).filter(m =>
+        m.sku === p.sku &&
+        (m.tipo === 'salida' || m.tipo === 'apartado') &&
+        new Date(m.created_at||m.fecha) >= hace30
+      ).reduce((s,m) => s + (m.placas||0), 0);
+      const ritmoDiario = salidas30 / 30;
+      const diasCobertura = ritmoDiario > 0 ? Math.round(disp / ritmoDiario) : null;
+      return { ...p, disp, salidas30, ritmoDiario, diasCobertura };
+    })
+    .filter(p => p.salidas30 > 0) // solo los que tienen actividad reciente
+    .sort((a,b) => (a.diasCobertura||9999) - (b.diasCobertura||9999))
+    .slice(0, 10);
+
+  const coberturaRows = coberturaData.length
+    ? coberturaData.map(p => {
+        const isM2 = CAT_M2.includes(p.categoria);
+        const disp = isM2 ? (p.disp*(p.m2_placa||0)).toFixed(1)+' m²' : p.disp.toFixed(0)+' pl';
+        const dias = p.diasCobertura;
+        const color = dias <= 15 ? '#dc2626' : dias <= 30 ? '#f59e0b' : '#16a34a';
+        const bg    = dias <= 15 ? '#fee2e2' : dias <= 30 ? '#fef9c3' : '#dcfce7';
+        const label = dias <= 15 ? '⚠️ Crítico' : dias <= 30 ? '🟡 Bajo' : '✅ OK';
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;"><div style="font-size:13px;font-weight:600;">'+p.nombre+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.categoria+'</span></td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;">'+disp+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:12px;color:#888;">'+p.salidas30.toFixed(0)+' pl/30d</td>'
+          +'<td style="padding:10px 12px;text-align:center;">'
+            +'<span style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:12px;background:'+bg+';color:'+color+';">'+dias+' días</span>'
+          +'</td>'
+          +'<td style="padding:10px 12px;text-align:center;">'
+            +'<span style="font-size:11px;color:'+color+';">'+label+'</span>'
+          +'</td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="5" style="padding:32px;text-align:center;color:#bbb;font-size:13px;">Sin datos de ventas recientes para calcular cobertura</td></tr>';
+
+  document.getElementById('invdash-cobertura').innerHTML =
+    '<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">📅 Cobertura de stock estimada</div>'
+        +'<span style="font-size:11px;color:#bbb;">basado en ritmo de salidas últimos 30 días</span>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        +'<thead><tr style="background:#fafaf8;">'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Stock disp.</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Ritmo salida</th>'
+          +'<th style="padding:9px 12px;text-align:center;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Cobertura</th>'
+          +'<th style="padding:9px 12px;text-align:center;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Estado</th>'
+        +'</tr></thead>'
+        +'<tbody>'+coberturaRows+'</tbody>'
+      +'</table>'
+    +'</div>';
+
+  // ── BLOQUE 7: SKUs cotizados sin inventario ───────────────────────────
+  const skusEnInv = new Set(invData.map(p => p.sku));
+  const sinInvMap = {};
+  historial.forEach(cot => {
+    (cot.items || cot.rows || []).forEach(item => {
+      if (!item.product) return;
+      const sku = item.product.sku;
+      if (skusEnInv.has(sku)) return; // ya tiene inventario
+      if (!sinInvMap[sku]) sinInvMap[sku] = {
+        sku, nom: item.product.nombre||sku,
+        cat: item.product.categoria||'', veces: 0, qty: 0
+      };
+      sinInvMap[sku].veces++;
+      sinInvMap[sku].qty += item.qty || 0;
+    });
+  });
+  const sinInvList = Object.values(sinInvMap)
+    .sort((a,b) => b.veces - a.veces).slice(0, 10);
+
+  const sinInvRows = sinInvList.length
+    ? sinInvList.map((p, i) => {
+        const isM2 = CAT_M2.includes(p.cat);
+        const vol  = p.qty.toFixed(0) + ' pl';
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#bbb;">'+(i+1)+'</td>'
+          +'<td style="padding:10px 12px;"><div style="font-size:13px;font-weight:600;">'+p.nom+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.cat+'</span></td>'
+          +'<td style="padding:10px 12px;text-align:right;font-weight:700;">'+p.veces+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#555;">'+vol+'</td>'
+          +'<td style="padding:10px 12px;text-align:center;">'
+            +'<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;background:#fef9c3;color:#854d0e;">Sin registro</span>'
+          +'</td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="5" style="padding:32px;text-align:center;color:#bbb;font-size:13px;">✅ Todos los productos cotizados tienen registro en inventario</td></tr>';
+
+  document.getElementById('invdash-sininv').innerHTML =
+    '<div style="background:#fff;border:1px solid #fcd34d;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:14px 20px;border-bottom:1px solid #fef9c3;display:flex;align-items:center;justify-content:space-between;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">⚠️ Cotizados sin inventario registrado</div>'
+        +'<span style="font-size:11px;color:#bbb;">'+sinInvList.length+' SKUs con hueco operativo</span>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        +'<thead><tr style="background:#fffbeb;">'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">#</th>'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Veces cotizado</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Volumen total</th>'
+          +'<th style="padding:9px 12px;text-align:center;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Estado</th>'
+        +'</tr></thead>'
+        +'<tbody>'+sinInvRows+'</tbody>'
+      +'</table>'
+    +'</div>';
+
+  // ── BLOQUE 8: Tasa de conversión por producto ────────────────────────
+  const convMap = {};
+  historial.forEach(cot => {
+    const isConv = ['Cerrada','Entregada'].includes(cot.status);
+    const isRech = cot.status === 'Rechazada';
+    (cot.items || cot.rows || []).forEach(item => {
+      if (!item.product || item.product.categoria === 'COMPLEMENTOS') return;
+      const sku = item.product.sku;
+      const nom = item.product.nombre || sku;
+      const cat = item.product.categoria || '';
+      if (!convMap[sku]) convMap[sku] = { sku, nom, cat, total: 0, cerradas: 0, rechazadas: 0 };
+      convMap[sku].total++;
+      if (isConv) convMap[sku].cerradas++;
+      if (isRech) convMap[sku].rechazadas++;
+    });
+  });
+
+  const convList = Object.values(convMap)
+    .filter(p => p.total >= 2) // mínimo 2 apariciones para ser relevante
+    .map(p => ({ ...p, tasa: Math.round(p.cerradas / p.total * 100) }))
+    .sort((a,b) => b.tasa - a.tasa || b.total - a.total)
+    .slice(0, 10);
+
+  const convRows = convList.length
+    ? convList.map((p, i) => {
+        const color = p.tasa >= 60 ? '#16a34a' : p.tasa >= 30 ? '#f59e0b' : '#dc2626';
+        const bg    = p.tasa >= 60 ? '#dcfce7' : p.tasa >= 30 ? '#fef9c3' : '#fee2e2';
+        const barW  = p.tasa;
+        return '<tr style="border-bottom:1px solid #f5f5f3;">'
+          +'<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#bbb;">'+(i+1)+'</td>'
+          +'<td style="padding:10px 12px;"><div style="font-size:13px;font-weight:600;">'+p.nom+'</div>'
+            +'<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#f0f0ee;color:#666;">'+p.cat+'</span></td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;">'+p.total+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#16a34a;font-weight:600;">'+p.cerradas+'</td>'
+          +'<td style="padding:10px 12px;text-align:right;font-size:13px;color:#dc2626;">'+p.rechazadas+'</td>'
+          +'<td style="padding:10px 12px;">'
+            +'<div style="display:flex;align-items:center;gap:8px;">'
+              +'<div style="flex:1;height:6px;background:#f0f0ee;border-radius:3px;overflow:hidden;">'
+                +'<div style="width:'+barW+'%;height:100%;background:'+color+';border-radius:3px;"></div>'
+              +'</div>'
+              +'<span style="font-size:13px;font-weight:800;color:'+color+';width:36px;text-align:right;">'+p.tasa+'%</span>'
+            +'</div>'
+          +'</td>'
+        +'</tr>';
+      }).join('')
+    : '<tr><td colspan="6" style="padding:32px;text-align:center;color:#bbb;font-size:13px;">Se necesitan más cotizaciones para calcular conversión</td></tr>';
+
+  document.getElementById('invdash-conversion').innerHTML =
+    '<div style="background:#fff;border:1px solid #e0e0de;border-radius:12px;overflow:hidden;">'
+      +'<div style="padding:14px 20px;border-bottom:1px solid #f0f0ee;display:flex;align-items:center;justify-content:space-between;">'
+        +'<div style="font-size:13px;font-weight:700;color:#333;">🎯 Tasa de conversión por producto</div>'
+        +'<span style="font-size:11px;color:#bbb;">mínimo 2 apariciones · sin complementos</span>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        +'<thead><tr style="background:#fafaf8;">'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">#</th>'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Producto</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Cotizaciones</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.06em;">Cerradas</th>'
+          +'<th style="padding:9px 12px;text-align:right;font-size:10px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.06em;">Rechazadas</th>'
+          +'<th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em;">Conversión</th>'
+        +'</tr></thead>'
+        +'<tbody>'+convRows+'</tbody>'
+      +'</table>'
+    +'</div>';
+
+}
+
+
+// =====================================================================
 // STATUS HELPERS
 // =====================================================================
 const STATUS_META = {
@@ -3349,7 +3998,7 @@ async function switchView(v) {
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
   document.getElementById('view-' + v).classList.add('active');
   // Sidebar order: nueva=0, historial=1, catalogo=2, listaprecios=3, convenio=4, dashboard=5
-  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5, inventario: 6, contenedores: 7 };
+  const tabIdx = { nueva: 0, historial: 1, catalogo: 2, listaprecios: 3, convenio: 4, dashboard: 5, inventario: 6, invdashboard: 7, contenedores: 8 };
   const tabs = document.querySelectorAll('.nav-tab');
   if (tabs[tabIdx[v] ?? 0]) tabs[tabIdx[v] ?? 0].classList.add('active');
   // Update topbar
@@ -3361,7 +4010,8 @@ async function switchView(v) {
     convenio: 'Precios Convenio',
     dashboard: 'Dashboard Comercial',
     inventario: 'Gestión de Inventario',
-    contenedores: 'Contenedores en Tránsito'
+    contenedores: 'Contenedores en Tránsito',
+    invdashboard: 'Dashboard de Inventario'
   };
   const actions = {
     nueva: '<button class="btn btn-success btn-sm" onclick="saveCot()">💾 Guardar</button><button class="btn btn-primary btn-sm" onclick="exportPDF()">📄 PDF</button><button class="btn btn-outline btn-sm" onclick="newCot()">🆕 Nueva</button>',
@@ -3371,7 +4021,8 @@ async function switchView(v) {
     convenio: '<button class="btn btn-primary btn-sm" onclick="convenioNuevo()">🤝 Nueva Lista</button>',
     dashboard: '<button class="btn btn-secondary btn-sm" onclick="renderDashboard()">↻ Actualizar</button>',
     inventario: '<button class="btn btn-primary btn-sm" onclick="invNuevoSKU()">+ Nuevo SKU</button><button class="btn btn-secondary btn-sm" onclick="invRender()">↻ Actualizar</button>',
-    contenedores: '<button class="btn btn-primary btn-sm" onclick="contNuevo()">🚢 Nuevo Contenedor</button><button class="btn btn-secondary btn-sm" onclick="contRender()">↻ Actualizar</button>'
+    contenedores: '<button class="btn btn-primary btn-sm" onclick="contNuevo()">🚢 Nuevo Contenedor</button><button class="btn btn-secondary btn-sm" onclick="contRender()">↻ Actualizar</button>',
+    invdashboard: '<button class="btn btn-secondary btn-sm" onclick="renderInvDashboard()">\u21bb Actualizar</button>'
   };
   const titleEl = document.getElementById('topbar-title');
   const actionsEl = document.getElementById('topbar-actions');
@@ -3381,8 +4032,15 @@ async function switchView(v) {
   if (v === 'dashboard') renderDashboard();
   if (v === 'catalogo') renderCatalog();
   if (v === 'convenio') renderConvenioList();
-  if (v === 'inventario') invRender();
+  if (v === 'inventario') {
+    const catSel = document.getElementById('inv-filter-cat');
+    const statSel = document.getElementById('inv-filter-status');
+    if (catSel) catSel.value = '';
+    if (statSel) statSel.value = '';
+    invRender();
+  }
   if (v === 'contenedores') contRender();
+  if (v === 'invdashboard') renderInvDashboard();
   if (v === 'nueva') { _invCacheForCot = []; invGetCacheForCot(); }
 }
 
@@ -5204,10 +5862,14 @@ async function updateStatusInline(num, val, event) {
     }
 
   } else if (necesitaEntrega) {
-    if (confirm(`¿Registrar entrega de ${num}?\nSe generará la salida de inventario automáticamente.`)) {
+    const vieneDeCerrada = prevStatus === 'Cerrada';
+    const msgEntrega = vieneDeCerrada
+      ? '\u00bfRegistrar entrega de ' + num + '?\nSe liberar\u00e1 el apartado y se registrar\u00e1 la salida de inventario.'
+      : '\u00bfRegistrar entrega de ' + num + '?\nSe registrar\u00e1 la salida de inventario.\n\nNota: esta cotizaci\u00f3n no ten\u00eda apartado previo.';
+    if (confirm(msgEntrega)) {
       await updateStatusInDB(num, val);
       await invRegistrarSalida(num, items, cliente);
-      notify(`Salida de inventario registrada para ${num} ✓`, 'success');
+      notify('Salida de inventario registrada para ' + num + ' \u2713', 'success');
     } else {
       if (prevSelect) prevSelect.value = prevStatus;
       return;
@@ -5352,22 +6014,177 @@ async function invRender() {
     return true;
   });
 
-  // KPIs — only from SKUs that have actual inventory records
+  // ── KPIs ─────────────────────────────────────────────────────────────
   const withInv = merged.filter(p => p.enInventario);
-  const totalSKUs    = withInv.length;
-  const totalDisp    = withInv.reduce((s,p) => s + Math.max(0,(p.stock_placas||0)-(p.apartado_placas||0)), 0);
-  const totalTransito = withInv.reduce((s,p) => s + (p.transito_placas||0), 0);
-  const stockBajo    = withInv.filter(p => {
-    const d = (p.stock_placas||0)-(p.apartado_placas||0);
-    return d <= (p.stock_minimo_placas||0) && d >= 0 && p.stock_minimo_placas > 0;
-  }).length;
-  document.getElementById('inv-kpis').innerHTML = `
-    <div class="kpi-card kpi-blue"><div class="kpi-label">SKUs con registro</div><div class="kpi-value">${totalSKUs}</div><div class="kpi-sub">${merged.length} en catálogo</div></div>
-    <div class="kpi-card kpi-green"><div class="kpi-label">Placas disponibles</div><div class="kpi-value">${totalDisp.toFixed(1)}</div></div>
-    <div class="kpi-card" style="background:#f0fdf4;border:1px solid #bbf7d0;"><div class="kpi-label" style="color:#166534;">En tránsito</div><div class="kpi-value" style="color:#166534;">${totalTransito.toFixed(1)}</div></div>
-    <div class="kpi-card" style="background:${stockBajo>0?'#fef9c3':'#f5f5f3'};border:1px solid ${stockBajo>0?'#fde047':'#e0e0de'};"><div class="kpi-label" style="color:${stockBajo>0?'#854d0e':'#666'};">Stock bajo/agotado</div><div class="kpi-value" style="color:${stockBajo>0?'#854d0e':'#333'};">${stockBajo}</div></div>
-  `;
 
+  // Unidad principal por categoría:
+  //   SINTERED STONE  → placas (clave) + m² como referencia
+  //   PORCELAIN / ESTERNI / SEMPLICE → m² (clave) + placas como referencia
+  const CAT_M2_KEY = ['PORCELAIN', 'ESTERNI', 'SEMPLICE'];
+
+  const dispOf    = p => Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+  const m2DispOf  = p => dispOf(p) * (p.m2_placa || 0);
+  const m2TransOf = p => (p.transito_placas||0) * (p.m2_placa || 0);
+
+  const totalSKUs = withInv.length;
+
+  // Card 2: Placas — SINTERED STONE
+  const sintItems  = withInv.filter(p => p.categoria === 'SINTERED STONE');
+  const sintPlacas = sintItems.reduce((s,p) => s + dispOf(p), 0);
+  const sintM2     = sintItems.reduce((s,p) => s + m2DispOf(p), 0);
+  const sintTrans  = sintItems.reduce((s,p) => s + (p.transito_placas||0), 0);
+
+  // Card 3: M² — PORCELAIN + ESTERNI + SEMPLICE
+  const m2CatItems  = withInv.filter(p => CAT_M2_KEY.includes(p.categoria));
+  const m2DispTotal = m2CatItems.reduce((s,p) => s + m2DispOf(p), 0);
+  const m2PlacasRef = m2CatItems.reduce((s,p) => s + dispOf(p), 0);
+  const m2TransM2   = m2CatItems.reduce((s,p) => s + m2TransOf(p), 0);
+
+  // Card 4: Apartado split
+  const totalApartado   = withInv.reduce((s,p) => s + (p.apartado_placas||0), 0);
+  const apartadoSint    = sintItems.reduce((s,p) => s + (p.apartado_placas||0), 0);
+  const apartadoM2CatM2 = m2CatItems.reduce((s,p) => s + (p.apartado_placas||0)*(p.m2_placa||0), 0);
+
+  // Card 5: Alertas
+  const stockBajo = withInv.filter(p => {
+    const d = dispOf(p);
+    return d <= (p.stock_minimo_placas||0) && d >= 0 && (p.stock_minimo_placas||0) > 0;
+  }).length;
+  const agotados = withInv.filter(p => dispOf(p) <= 0 && (p.stock_placas||0) > 0).length;
+  const alertColor  = (stockBajo + agotados) > 0 ? '#dc2626' : '#166534';
+  const alertBg     = (stockBajo + agotados) > 0 ? '#fee2e2' : '#dcfce7';
+  const alertBorder = (stockBajo + agotados) > 0 ? '#fca5a5' : '#86efac';
+
+  // Composición por categoría
+  const cats      = ['SINTERED STONE','PORCELAIN','ESTERNI','SEMPLICE','COMPLEMENTOS'];
+  const catLabels = {'SINTERED STONE':'Sintered','PORCELAIN':'Porcelain','ESTERNI':'Esterni','SEMPLICE':'Semplice','COMPLEMENTOS':'Compl.'};
+  const catColors = {'SINTERED STONE':'#1A3A4A','PORCELAIN':'#2563eb','ESTERNI':'#059669','SEMPLICE':'#7c3aed','COMPLEMENTOS':'#b45309'};
+
+  const catStats = cats.map(cat => {
+    const items   = withInv.filter(p => p.categoria === cat);
+    const placas  = items.reduce((s,p) => s + dispOf(p), 0);
+    const m2      = items.reduce((s,p) => s + m2DispOf(p), 0);
+    const trans   = items.reduce((s,p) => s + (p.transito_placas||0), 0);
+    const transM2 = items.reduce((s,p) => s + m2TransOf(p), 0);
+    const isM2Key = CAT_M2_KEY.includes(cat);
+    return { cat, label: catLabels[cat], color: catColors[cat],
+             skus: items.length, placas, m2, trans, transM2, isM2Key };
+  }).filter(c => c.skus > 0);
+
+  // Barra proporcional basada en placas de cada cat (normalizadas)
+  const totalPlacasAll = catStats.reduce((s,c) => s + c.placas, 0) || 1;
+  let barSegments = '';
+  catStats.forEach(c => {
+    const pct = (c.placas / totalPlacasAll * 100).toFixed(1);
+    const unit = c.isM2Key ? c.m2.toFixed(0)+' m\u00b2' : c.placas.toFixed(0)+' pl';
+    barSegments += '<div title="'+c.label+': '+unit+' ('+pct+'% placas)" style="width:'+pct+'%;background:'+c.color+';height:100%;min-width:'+(c.placas>0?'2px':'0')+';transition:width .3s;"></div>';
+  });
+
+  // Pills
+  let catPills = '';
+  catStats.forEach(c => {
+    const mainNum  = c.isM2Key ? c.m2.toFixed(1) : c.placas.toFixed(0);
+    const mainUnit = c.isM2Key ? ' m\u00b2' : ' pl';
+    const subLine  = c.isM2Key
+      ? (c.placas > 0 ? '<div style="font-size:10px;color:#888;">'+c.placas.toFixed(0)+' placas</div>' : '')
+      : (c.m2 > 0     ? '<div style="font-size:10px;color:#888;">'+c.m2.toFixed(1)+' m\u00b2</div>'    : '');
+    const transLine = (c.isM2Key && c.transM2 > 0)
+      ? '<div style="font-size:10px;color:#0284c7;">+'+c.transM2.toFixed(1)+' m\u00b2 tr\u00e1nsito</div>'
+      : (!c.isM2Key && c.trans > 0)
+        ? '<div style="font-size:10px;color:#0284c7;">+'+c.trans.toFixed(0)+' pl tr\u00e1nsito</div>'
+        : '';
+    catPills +=
+      '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:#fafaf8;border-radius:8px;border:1px solid #ebebea;">'
+        +'<div style="width:8px;height:8px;border-radius:50%;background:'+c.color+';flex-shrink:0;margin-top:4px;"></div>'
+        +'<div style="flex:1;min-width:0;">'
+          +'<div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">'+c.label+'</div>'
+          +'<div><span style="font-size:13px;font-weight:700;color:#333;">'+mainNum+'</span><span style="font-size:10px;color:#888;">'+mainUnit+'</span></div>'
+          +subLine+transLine
+        +'</div>'
+        +'<div style="font-size:10px;color:#bbb;text-align:right;white-space:nowrap;">'+c.skus+' SKU'+(c.skus>1?'s':'')+'</div>'
+      +'</div>';
+  });
+
+  // Build pie chart SVG
+  const pieTotal = catStats.reduce((s,c) => s + c.placas, 0) || 1;
+  let pieSlices = '';
+  let cumAngle = -90; // start at top
+  catStats.forEach(c => {
+    const pct = c.placas / pieTotal;
+    if (pct <= 0) return;
+    const angle = pct * 360;
+    const r = 36;
+    const cx = 44, cy = 44;
+    const startRad = cumAngle * Math.PI / 180;
+    const endRad   = (cumAngle + angle) * Math.PI / 180;
+    const x1 = cx + r * Math.cos(startRad);
+    const y1 = cy + r * Math.sin(startRad);
+    const x2 = cx + r * Math.cos(endRad);
+    const y2 = cy + r * Math.sin(endRad);
+    const large = angle > 180 ? 1 : 0;
+    pieSlices += '<path d="M'+cx+','+cy+' L'+x1.toFixed(2)+','+y1.toFixed(2)+' A'+r+','+r+' 0 '+large+',1 '+x2.toFixed(2)+','+y2.toFixed(2)+' Z" fill="'+c.color+'" opacity="0.9"><title>'+c.label+': '+c.placas.toFixed(0)+' pl</title></path>';
+    cumAngle += angle;
+  });
+  const pieSVG = '<svg width="88" height="88" viewBox="0 0 88 88" style="flex-shrink:0;">'
+    +'<circle cx="44" cy="44" r="36" fill="#f0f0ee"/>'
+    +pieSlices
+    +'<circle cx="44" cy="44" r="22" fill="#fff"/>'
+    +'<text x="44" y="48" text-anchor="middle" font-size="10" font-weight="700" fill="#555">'+totalSKUs+'</text>'
+    +'</svg>';
+
+  const pieLegend = catStats.map(c => {
+    const val = c.isM2Key ? c.m2.toFixed(0)+' m\u00b2' : c.placas.toFixed(0)+' pl';
+    return '<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#666;">'
+      +'<span style="width:8px;height:8px;border-radius:2px;background:'+c.color+';flex-shrink:0;display:inline-block;"></span>'
+      +'<span>'+c.label+'</span>'
+      +'<b style="color:#333;margin-left:auto;padding-left:8px;">'+val+'</b>'
+    +'</div>';
+  }).join('');
+
+  document.getElementById('inv-kpis').innerHTML =
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">'
+
+      // 1 — SKUs
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04);">'
+        +'<div style="font-size:9px;font-weight:700;color:#bbb;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">SKUs</div>'
+        +'<div style="font-size:32px;font-weight:800;color:#1a1a1a;line-height:1;margin-bottom:5px;">'+totalSKUs+'</div>'
+        +'<div style="font-size:11px;color:#bbb;">'+merged.length+' cat\u00e1logo</div>'
+      +'</div>'
+
+      // 2 — Placas Sintered
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-left:3px solid #16a34a;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04);">'
+        +'<div style="font-size:9px;font-weight:700;color:#bbb;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Placas \u00b7 Sintered</div>'
+        +'<div style="font-size:32px;font-weight:800;color:#1a1a1a;line-height:1;margin-bottom:5px;">'+sintPlacas.toFixed(0)+'<span style="font-size:12px;color:#bbb;margin-left:3px;">pl</span></div>'
+        +'<div style="font-size:11px;color:#bbb;">'+(sintM2>0?sintM2.toFixed(1)+' m\u00b2':'\u2014')+(sintTrans>0?' <span style=\"color:#0284c7;font-weight:600;\">+'+sintTrans.toFixed(0)+' tr.</span>':'')+'</div>'
+      +'</div>'
+
+      // 3 — M² clave
+      +'<div style="background:#f0fdf4;border:1px solid #86efac;border-left:3px solid #16a34a;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(22,163,74,.07);">'
+        +'<div style="font-size:9px;font-weight:700;color:#15803d;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">M\u00b2 \u00b7 Porc / Ext / Sem</div>'
+        +'<div style="font-size:32px;font-weight:800;color:#15803d;line-height:1;margin-bottom:5px;">'+m2DispTotal.toFixed(1)+'<span style="font-size:12px;color:#4ade80;margin-left:3px;">m\u00b2</span></div>'
+        +'<div style="font-size:11px;color:#4ade80;">'+m2PlacasRef.toFixed(0)+' pl'+(m2TransM2>0?' <span style=\"color:#0284c7;font-weight:600;\">+'+m2TransM2.toFixed(1)+' m\u00b2</span>':'')+'</div>'
+      +'</div>'
+
+      // 4 — Apartado
+      +'<div style="background:#fff;border:1px solid #e0e0de;border-left:3px solid #f59e0b;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04);">'
+        +'<div style="font-size:9px;font-weight:700;color:#bbb;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Apartado</div>'
+        +'<div style="font-size:32px;font-weight:800;color:#92400e;line-height:1;margin-bottom:5px;">'+totalApartado.toFixed(0)+'<span style="font-size:12px;color:#d97706;margin-left:3px;">pl</span></div>'
+        +'<div style="font-size:11px;color:#bbb;">'
+          +(apartadoSint>0?'Sint '+apartadoSint.toFixed(0)+' pl':'')
+          +(apartadoSint>0&&apartadoM2CatM2>0?' \u00b7 ':'')
+          +(apartadoM2CatM2>0?apartadoM2CatM2.toFixed(0)+' m\u00b2':'')
+          +(apartadoSint===0&&apartadoM2CatM2===0?'sin reservas':'')
+        +'</div>'
+      +'</div>'
+
+      // 5 — Alertas
+      +'<div style="background:'+(stockBajo+agotados>0?'#fff5f5':'#fff')+';border:1px solid '+(stockBajo+agotados>0?'#fca5a5':'#e0e0de')+';border-left:3px solid '+(stockBajo+agotados>0?'#dc2626':'#16a34a')+';border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04);">'
+        +'<div style="font-size:9px;font-weight:700;color:#bbb;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Alertas</div>'
+        +'<div style="font-size:32px;font-weight:800;color:'+(stockBajo+agotados>0?'#dc2626':'#16a34a')+';line-height:1;margin-bottom:5px;">'+(stockBajo+agotados)+'</div>'
+        +'<div style="font-size:11px;color:#bbb;">'+agotados+' agot. \u00b7 '+stockBajo+' m\u00ednimo</div>'
+      +'</div>'
+
+    +'</div>';
   if (!rows.length) {
     tbody.innerHTML = '';
     empty.style.display = '';
@@ -5401,11 +6218,25 @@ async function invRender() {
         ${p.ubicacion ? '<div style="font-size:11px;color:#bbb;">📍 '+p.ubicacion+'</div>' : ''}
       </td>
       <td style="padding:10px 12px;"><span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#f0f0ee;color:#555;">${p.categoria||'—'}</span></td>
-      <td style="padding:10px 12px;text-align:right;font-weight:600;color:${stock>0?'#333':'#ccc'};">${stock > 0 ? stock.toFixed(1)+' <span style="font-size:10px;color:#aaa;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;color:#dc2626;">${apart > 0 ? apart.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:${disp>0?'#333':'#ccc'};">${disp > 0 ? disp.toFixed(1)+' <span style="font-size:10px;color:#aaa;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;color:#0284c7;">${trans > 0 ? trans.toFixed(1)+' <span style="font-size:10px;">pl</span>' : '—'}</td>
-      <td style="padding:10px 12px;text-align:right;color:#555;">${p.m2_placa && disp > 0 ? m2disp.toFixed(2)+' m²' : '—'}</td>
+      <td style="padding:10px 12px;text-align:right;font-weight:600;color:${stock>0?'#333':'#ccc'};">
+        ${stock > 0 ? stock.toFixed(0)+' <span style="font-size:10px;color:#aaa;">pl</span>' : '—'}
+        ${p.m2_placa && stock > 0 ? '<div style="font-size:10px;color:#aaa;">'+(stock*p.m2_placa).toFixed(1)+' m²</div>' : ''}
+      </td>
+      <td style="padding:10px 12px;text-align:right;color:#dc2626;">
+        ${apart > 0 ? apart.toFixed(0)+' <span style="font-size:10px;">pl</span>' : '—'}
+        ${p.m2_placa && apart > 0 ? '<div style="font-size:10px;color:#fca5a5;">'+(apart*p.m2_placa).toFixed(1)+' m²</div>' : ''}
+      </td>
+      <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:${disp>0?'#333':'#ccc'};">
+        ${disp > 0 ? disp.toFixed(0)+' <span style="font-size:10px;color:#aaa;font-weight:400;">pl</span>' : '—'}
+        ${p.m2_placa && disp > 0 ? '<div style="font-size:11px;color:#059669;font-weight:600;">'+m2disp.toFixed(1)+' m²</div>' : ''}
+      </td>
+      <td style="padding:10px 12px;text-align:right;color:#0284c7;">
+        ${trans > 0 ? trans.toFixed(0)+' <span style="font-size:10px;">pl</span>' : '—'}
+        ${p.m2_placa && trans > 0 ? '<div style="font-size:10px;color:#93c5fd;">'+(trans*p.m2_placa).toFixed(1)+' m²</div>' : ''}
+      </td>
+      <td style="padding:10px 12px;text-align:right;color:#555;font-weight:600;">
+        ${p.m2_placa ? p.m2_placa.toFixed(2)+' m²' : '—'}
+      </td>
       <td style="padding:10px 12px;text-align:center;"><span style="font-size:11px;padding:3px 8px;border-radius:12px;${badgeStyle}">${badge}</span></td>
       <td style="padding:10px 12px;text-align:right;">
         <div style="display:flex;gap:6px;justify-content:flex-end;">
