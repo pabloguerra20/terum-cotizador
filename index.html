@@ -1844,58 +1844,10 @@
         </div>
       </div>
 
-      <!-- Movimiento panel -->
+      <!-- Historial panel (full-page, kept for reference) -->
       <div id="inv-mov-panel" style="display:none;">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-          <button class="btn btn-outline btn-sm" onclick="invCloseMovPanel()">← Regresar</button>
-          <h3 id="inv-mov-title" style="margin:0;font-size:16px;font-weight:600;"></h3>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:640px;">
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">TIPO DE MOVIMIENTO</label>
-            <select id="inv-mov-tipo" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
-              <option value="entrada">📥 Entrada — llegada a bodega</option>
-              <option value="salida">📤 Salida — entrega a cliente</option>
-              <option value="apartado">🔒 Apartar — reservar para cliente</option>
-              <option value="liberado">🔓 Liberar apartado</option>
-              <option value="transito_entrada">🚢 Registrar en tránsito</option>
-              <option value="transito_llegada">🏭 Tránsito llegó a bodega</option>
-              <option value="ajuste">⚖️ Ajuste de inventario</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">PLACAS</label>
-            <input type="number" id="inv-mov-placas" min="0.01" step="0.01" placeholder="0" oninput="invMovCalcM2()" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">M² (calculado)</label>
-            <input type="number" id="inv-mov-m2" readonly placeholder="—" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;background:#f9f9f7;color:#888;">
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">FECHA</label>
-            <input type="date" id="inv-mov-fecha" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">REFERENCIA (OC, COT, contenedor…)</label>
-            <input type="text" id="inv-mov-ref" placeholder="Ej. OC-2026-001" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">CLIENTE (opcional)</label>
-            <input type="text" id="inv-mov-cliente" placeholder="Nombre del cliente" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;">
-          </div>
-          <div style="grid-column:1/-1;">
-            <label style="font-size:12px;font-weight:600;color:#666;display:block;margin-bottom:4px;">NOTAS</label>
-            <textarea id="inv-mov-notas" rows="2" placeholder="Observaciones opcionales" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:13px;resize:vertical;"></textarea>
-          </div>
-        </div>
-        <div style="margin-top:16px;display:flex;gap:10px;">
-          <button class="btn btn-primary" onclick="invGuardarMovimiento()">💾 Registrar movimiento</button>
-          <button class="btn btn-outline" onclick="invCloseMovPanel()">Cancelar</button>
-        </div>
-        <div style="margin-top:32px;">
-          <h4 style="font-size:14px;font-weight:600;margin-bottom:12px;">Historial de movimientos</h4>
-          <div id="inv-mov-historial"></div>
-        </div>
+        <!-- legacy hidden, historial now inside modal -->
+        <div id="inv-mov-historial" style="display:none;"></div>
       </div>
 
       <!-- Nuevo SKU panel -->
@@ -6342,25 +6294,130 @@ function invCloseSKUPanel() {
 }
 
 // ── Movimiento panel ──────────────────────────────────────────────────────────
+// ── Modal state ──────────────────────────────────────────────────────
+let _invModalSigno = 1; // +1 o -1, solo usado para tipo 'ajuste'
+
+const INV_TIPO_DESC = {
+  entrada:          'Llegada de mercancía a bodega. Incrementa stock disponible.',
+  salida:           'Entrega a cliente. Descuenta del stock y libera apartado automáticamente.',
+  apartado:         'Reserva placas para un cliente sin salir de bodega.',
+  liberado:         'Cancela un apartado y devuelve disponibilidad.',
+  transito_entrada: 'Registra mercancía enviada desde proveedor (aún no llega).',
+  transito_llegada: 'Confirma llegada de tránsito a bodega. Descuenta tránsito y suma stock.',
+  merma:            'Baja por rotura, daño o pérdida. Requiere motivo obligatorio.',
+  ajuste:           'Corrección manual de inventario. Requiere motivo obligatorio.',
+};
+
 async function invOpenMovPanel(sku) {
   _invMovSku = sku;
+  _invModalSigno = 1;
+
   let p = _invData.find(x => x.sku === sku);
   if (!p) {
     const allProds = await getAllProducts();
     p = allProds.find(x => x.sku === sku);
   }
-  document.getElementById('inv-mov-title').textContent = (p ? p.nombre : sku) + ' — Registrar movimiento';
-  document.getElementById('inv-mov-tipo').value   = 'entrada';
-  document.getElementById('inv-mov-placas').value = '';
-  document.getElementById('inv-mov-m2').value     = '';
-  document.getElementById('inv-mov-fecha').value  = today();
-  document.getElementById('inv-mov-ref').value    = '';
+
+  // Populate header
+  document.getElementById('inv-modal-sku-nombre').textContent = p ? p.nombre : sku;
+  document.getElementById('inv-modal-sku-code').textContent   = p ? p.sku : '';
+  const stock     = p ? (p.stock_placas     || 0) : 0;
+  const apartado  = p ? (p.apartado_placas  || 0) : 0;
+  const disponible = Math.max(0, stock - apartado);
+  document.getElementById('inv-modal-stock').textContent      = stock.toFixed(0);
+  document.getElementById('inv-modal-apartado').textContent   = apartado.toFixed(0);
+  document.getElementById('inv-modal-disponible').textContent = disponible.toFixed(0);
+
+  // Reset form
+  document.getElementById('inv-mov-tipo').value    = 'entrada';
+  document.getElementById('inv-mov-placas').value  = '';
+  document.getElementById('inv-mov-m2').value      = '';
+  document.getElementById('inv-mov-fecha').value   = today();
+  document.getElementById('inv-mov-ref').value     = '';
   document.getElementById('inv-mov-cliente').value = '';
-  document.getElementById('inv-mov-notas').value  = '';
-  document.getElementById('inv-main-panel').style.display = 'none';
-  document.getElementById('inv-mov-panel').style.display  = '';
-  // Load historial
-  await invRenderHistorial(sku);
+  document.getElementById('inv-mov-notas').value   = '';
+  document.getElementById('inv-modal-resultado-chip').style.display = 'none';
+  document.getElementById('inv-modal-historial-section').style.display = 'none';
+  document.getElementById('inv-modal-historial-toggle').textContent = 'Ver historial';
+
+  // Select 'entrada' by default
+  invModalSelectTipo('entrada');
+
+  // Show modal
+  const overlay = document.getElementById('inv-modal-overlay');
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+
+  // Load historial in background
+  invRenderHistorial(sku);
+}
+
+function invModalSelectTipo(tipo) {
+  document.getElementById('inv-mov-tipo').value = tipo;
+  // Update button states
+  document.querySelectorAll('.inv-tipo-btn').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.tipo === tipo);
+  });
+  // Description
+  document.getElementById('inv-modal-tipo-desc').textContent = INV_TIPO_DESC[tipo] || '';
+  // Show/hide motivo (required for ajuste/merma)
+  const needsMotivo = tipo === 'ajuste' || tipo === 'merma';
+  document.getElementById('inv-modal-motivo-row').style.display = needsMotivo ? '' : 'none';
+  // Show/hide signo row (only for ajuste)
+  document.getElementById('inv-modal-ajuste-signo-row').style.display = tipo === 'ajuste' ? '' : 'none';
+  // Reset resultado
+  invModalUpdateResultado();
+}
+
+function invModalSetSigno(signo) {
+  _invModalSigno = signo;
+  const pos = document.getElementById('inv-modal-signo-pos');
+  const neg = document.getElementById('inv-modal-signo-neg');
+  if (signo === 1) {
+    pos.style.cssText += ';border-color:#22c55e!important;background:#f0fdf4!important;color:#15803d!important;';
+    neg.style.cssText += ';border-color:#e5e7eb!important;background:#fff!important;color:#666!important;';
+  } else {
+    neg.style.cssText += ';border-color:#ef4444!important;background:#fef2f2!important;color:#b91c1c!important;';
+    pos.style.cssText += ';border-color:#e5e7eb!important;background:#fff!important;color:#666!important;';
+  }
+  invModalUpdateResultado();
+}
+
+function invModalUpdateResultado() {
+  const tipo   = document.getElementById('inv-mov-tipo').value;
+  const placas = parseFloat(document.getElementById('inv-mov-placas').value) || 0;
+  if (!placas || !_invMovSku) { document.getElementById('inv-modal-resultado-chip').style.display = 'none'; return; }
+
+  const p       = _invData.find(x => x.sku === _invMovSku);
+  const stock   = p ? (p.stock_placas || 0) : 0;
+  let delta = 0;
+  if (tipo === 'entrada')          delta = +placas;
+  else if (tipo === 'salida')      delta = -placas;
+  else if (tipo === 'merma')       delta = -placas;
+  else if (tipo === 'transito_llegada') delta = +placas;
+  else if (tipo === 'ajuste')      delta = placas * _invModalSigno;
+
+  if (tipo === 'apartado' || tipo === 'liberado' || tipo === 'transito_entrada') {
+    document.getElementById('inv-modal-resultado-chip').style.display = 'none';
+    return;
+  }
+
+  const resultado = Math.max(0, stock + delta);
+  const chip = document.getElementById('inv-modal-resultado-chip');
+  const val  = document.getElementById('inv-modal-resultado-val');
+  val.textContent = resultado.toFixed(0);
+  chip.style.display = '';
+  // Color based on result
+  if (resultado === 0) {
+    chip.style.background = '#fef2f2'; chip.style.borderColor = '#ef4444';
+    val.style.color = '#b91c1c';
+  } else if (resultado < (p?.stock_minimo_placas || 0)) {
+    chip.style.background = '#fffbeb'; chip.style.borderColor = '#f59e0b';
+    val.style.color = '#92400e';
+  } else {
+    chip.style.background = '#f0fdf4'; chip.style.borderColor = '#22c55e';
+    val.style.color = '#15803d';
+  }
 }
 
 function invMovCalcM2() {
@@ -6371,41 +6428,79 @@ function invMovCalcM2() {
   document.getElementById('inv-mov-m2').value = m2pp ? (placas * m2pp).toFixed(3) : '';
 }
 
+function invModalCheckClose(e) {
+  if (e.target === document.getElementById('inv-modal-overlay')) invCloseMovPanel();
+}
+
+function invModalToggleHistorial() {
+  const sec = document.getElementById('inv-modal-historial-section');
+  const tog = document.getElementById('inv-modal-historial-toggle');
+  const isOpen = sec.style.display !== 'none';
+  sec.style.display = isOpen ? 'none' : '';
+  tog.textContent   = isOpen ? 'Ver historial' : 'Ocultar historial';
+}
+
 async function invGuardarMovimiento() {
   const sku    = _invMovSku;
   const tipo   = document.getElementById('inv-mov-tipo').value;
-  const placas = parseFloat(document.getElementById('inv-mov-placas').value);
-  if (!sku || isNaN(placas) || placas <= 0) { notify('Ingresa una cantidad válida', 'error'); return; }
-  const m2     = parseFloat(document.getElementById('inv-mov-m2').value) || 0;
-  const fecha  = document.getElementById('inv-mov-fecha').value;
-  const ref    = document.getElementById('inv-mov-ref').value.trim();
+  const placasRaw = parseFloat(document.getElementById('inv-mov-placas').value);
+  if (!sku || isNaN(placasRaw) || placasRaw <= 0) { notify('Ingresa una cantidad válida', 'error'); return; }
+
+  // Validar motivo para ajuste/merma
+  const needsMotivo = tipo === 'ajuste' || tipo === 'merma';
+  const motivo = needsMotivo ? (document.getElementById('inv-modal-motivo')?.value || '') : '';
+  if (needsMotivo && !motivo) { notify('Selecciona un motivo para el ajuste', 'error'); return; }
+
+  const placas  = tipo === 'ajuste' ? placasRaw * _invModalSigno : placasRaw;
+  const m2      = parseFloat(document.getElementById('inv-mov-m2').value) || 0;
+  const fecha   = document.getElementById('inv-mov-fecha').value;
+  const ref     = document.getElementById('inv-mov-ref').value.trim();
   const cliente = document.getElementById('inv-mov-cliente').value.trim();
-  const notas  = document.getElementById('inv-mov-notas').value.trim();
+  const notas   = [motivo, document.getElementById('inv-mov-notas').value.trim()].filter(Boolean).join(' — ');
 
   // Determine stock deltas
   let ds = 0, da = 0, dt = 0;
   switch(tipo) {
-    case 'entrada':        ds = +placas; break;
-    case 'salida':         ds = -placas; da = -(Math.min(placas, (_invData.find(x=>x.sku===sku)?.apartado_placas||0))); break;
-    case 'apartado':       da = +placas; break;
-    case 'liberado':       da = -placas; break;
+    case 'entrada':          ds = +placas; break;
+    case 'salida':           ds = -placas; da = -(Math.min(placas, (_invData.find(x=>x.sku===sku)?.apartado_placas||0))); break;
+    case 'apartado':         da = +placas; break;
+    case 'liberado':         da = -placas; break;
     case 'transito_entrada': dt = +placas; break;
     case 'transito_llegada': dt = -placas; ds = +placas; break;
-    case 'ajuste':         ds = placas; break; // can be negative
+    case 'merma':            ds = -placas; break;
+    case 'ajuste':           ds = placas; break;
   }
 
-  const movOk = await invInsertMovimiento({ sku, tipo, placas, m2, referencia: ref, cliente, notas, fecha });
+  const btn = document.getElementById('inv-modal-guardar-btn');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+
+  const movOk   = await invInsertMovimiento({ sku, tipo, placas: Math.abs(placas), m2, referencia: ref, cliente, notas, fecha });
   const stockOk = await invUpdateStock(sku, ds, da, dt);
+
+  btn.disabled = false; btn.textContent = '💾 Registrar movimiento';
 
   if (movOk && stockOk) {
     notify('Movimiento registrado ✓', 'success');
-    document.getElementById('inv-mov-placas').value = '';
-    document.getElementById('inv-mov-m2').value = '';
-    document.getElementById('inv-mov-ref').value = '';
+    // Reset inputs but keep modal open for next movement
+    document.getElementById('inv-mov-placas').value  = '';
+    document.getElementById('inv-mov-m2').value      = '';
+    document.getElementById('inv-mov-ref').value     = '';
     document.getElementById('inv-mov-cliente').value = '';
-    document.getElementById('inv-mov-notas').value = '';
+    document.getElementById('inv-mov-notas').value   = '';
+    if (document.getElementById('inv-modal-motivo')) document.getElementById('inv-modal-motivo').value = '';
+    document.getElementById('inv-modal-resultado-chip').style.display = 'none';
+    _invData = await invLoad();
+    // Refresh stock chips in header
+    const p2 = _invData.find(x => x.sku === sku);
+    if (p2) {
+      document.getElementById('inv-modal-stock').textContent      = (p2.stock_placas||0).toFixed(0);
+      document.getElementById('inv-modal-apartado').textContent   = (p2.apartado_placas||0).toFixed(0);
+      document.getElementById('inv-modal-disponible').textContent = Math.max(0,(p2.stock_placas||0)-(p2.apartado_placas||0)).toFixed(0);
+    }
     await invRenderHistorial(sku);
-    _invData = await invLoad(); // refresh local cache
+    // Auto-show historial after first movement
+    const sec = document.getElementById('inv-modal-historial-section');
+    if (sec.style.display === 'none') { sec.style.display = ''; document.getElementById('inv-modal-historial-toggle').textContent = 'Ocultar historial'; }
   } else {
     notify('Error al registrar movimiento', 'error');
   }
@@ -6417,13 +6512,14 @@ async function invRenderHistorial(sku) {
   if (!el) return;
   if (!movs.length) { el.innerHTML = '<div style="color:#aaa;font-size:13px;padding:12px 0;">Sin movimientos registrados</div>'; return; }
   const TIPO_LABEL = {
-    entrada:         '📥 Entrada',
-    salida:          '📤 Salida',
-    apartado:        '🔒 Apartado',
-    liberado:        '🔓 Liberado',
-    transito_entrada:'🚢 A tránsito',
-    transito_llegada:'🏭 Tránsito llegó',
-    ajuste:          '⚖️ Ajuste',
+    entrada:          '📥 Entrada',
+    salida:           '📤 Salida',
+    apartado:         '🔒 Apartado',
+    liberado:         '🔓 Liberado',
+    transito_entrada: '🚢 A tránsito',
+    transito_llegada: '🏭 Tránsito llegó',
+    merma:            '💔 Merma',
+    ajuste:           '⚖️ Ajuste',
   };
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="background:#f5f5f3;border-bottom:1px solid #e0e0de;">
@@ -6432,24 +6528,23 @@ async function invRenderHistorial(sku) {
       <th style="padding:8px 10px;text-align:right;">Placas</th>
       <th style="padding:8px 10px;text-align:right;">M²</th>
       <th style="padding:8px 10px;text-align:left;">Referencia</th>
-      <th style="padding:8px 10px;text-align:left;">Cliente</th>
       <th style="padding:8px 10px;text-align:left;">Notas</th>
     </tr></thead>
     <tbody>${movs.map(m => `<tr style="border-bottom:1px solid #f5f5f3;">
-      <td style="padding:7px 10px;color:#666;">${m.fecha || '—'}</td>
+      <td style="padding:7px 10px;color:#666;white-space:nowrap;">${m.fecha || '—'}</td>
       <td style="padding:7px 10px;">${TIPO_LABEL[m.tipo] || m.tipo}</td>
       <td style="padding:7px 10px;text-align:right;font-weight:600;">${(m.placas||0).toFixed(1)}</td>
       <td style="padding:7px 10px;text-align:right;color:#888;">${m.m2 ? m.m2.toFixed(2) : '—'}</td>
       <td style="padding:7px 10px;color:#555;">${m.referencia || '—'}</td>
-      <td style="padding:7px 10px;color:#555;">${m.cliente || '—'}</td>
-      <td style="padding:7px 10px;color:#888;">${m.notas || '—'}</td>
+      <td style="padding:7px 10px;color:#888;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${m.notas||''}">${m.notas || '—'}</td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
 
 function invCloseMovPanel() {
-  document.getElementById('inv-mov-panel').style.display = 'none';
-  document.getElementById('inv-main-panel').style.display = '';
+  const overlay = document.getElementById('inv-modal-overlay');
+  overlay.style.display = 'none';
+  document.body.style.overflow = '';
   invRender();
 }
 
@@ -6458,5 +6553,199 @@ function invCloseMovPanel() {
 // =====================================================================
 (async () => { await initForm(); })();
 </script>
+
+<!-- =====================================================================
+     MODAL DE MOVIMIENTO DE INVENTARIO
+     ===================================================================== -->
+<div id="inv-modal-overlay" onclick="invModalCheckClose(event)" style="
+  display:none;position:fixed;inset:0;z-index:9000;
+  background:rgba(0,0,0,0.45);backdrop-filter:blur(3px);
+  align-items:center;justify-content:center;padding:16px;
+">
+  <div id="inv-modal-box" style="
+    background:#fff;border-radius:14px;width:100%;max-width:600px;
+    box-shadow:0 24px 64px rgba(0,0,0,0.22);overflow:hidden;
+    font-family:'DM Sans',sans-serif;
+  ">
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0ee;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#999;text-transform:uppercase;margin-bottom:4px;">Registrar Movimiento</div>
+          <div id="inv-modal-sku-nombre" style="font-size:17px;font-weight:700;color:#1a1a1a;line-height:1.2;"></div>
+          <div id="inv-modal-sku-code" style="font-size:12px;color:#888;margin-top:2px;"></div>
+        </div>
+        <button onclick="invCloseMovPanel()" style="background:none;border:none;cursor:pointer;padding:4px;color:#aaa;font-size:20px;line-height:1;flex-shrink:0;">✕</button>
+      </div>
+      <!-- Stock chips -->
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+        <div style="background:#f5f5f3;border-radius:8px;padding:8px 14px;text-align:center;min-width:90px;">
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">En Bodega</div>
+          <div id="inv-modal-stock" style="font-size:20px;font-weight:800;color:#1a1a1a;"></div>
+          <div style="font-size:10px;color:#aaa;">placas</div>
+        </div>
+        <div style="background:#f5f5f3;border-radius:8px;padding:8px 14px;text-align:center;min-width:90px;">
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Apartado</div>
+          <div id="inv-modal-apartado" style="font-size:20px;font-weight:800;color:#f59e0b;"></div>
+          <div style="font-size:10px;color:#aaa;">placas</div>
+        </div>
+        <div style="background:#f5f5f3;border-radius:8px;padding:8px 14px;text-align:center;min-width:90px;">
+          <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Disponible</div>
+          <div id="inv-modal-disponible" style="font-size:20px;font-weight:800;color:#22c55e;"></div>
+          <div style="font-size:10px;color:#aaa;">placas</div>
+        </div>
+        <!-- Resultado preview -->
+        <div id="inv-modal-resultado-chip" style="background:#e8f5e9;border-radius:8px;padding:8px 14px;text-align:center;min-width:90px;border:2px solid #22c55e;display:none;">
+          <div style="font-size:10px;font-weight:700;color:#22c55e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Resultado</div>
+          <div id="inv-modal-resultado-val" style="font-size:20px;font-weight:800;color:#15803d;"></div>
+          <div style="font-size:10px;color:#16a34a;">en bodega</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form -->
+    <div style="padding:20px 24px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+        <!-- Tipo -->
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Tipo de Movimiento</label>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;" id="inv-modal-tipo-grid">
+            <button class="inv-tipo-btn" data-tipo="entrada" onclick="invModalSelectTipo('entrada')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">📥 Entrada</button>
+            <button class="inv-tipo-btn" data-tipo="salida" onclick="invModalSelectTipo('salida')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">📤 Salida</button>
+            <button class="inv-tipo-btn" data-tipo="apartado" onclick="invModalSelectTipo('apartado')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">🔒 Apartar</button>
+            <button class="inv-tipo-btn" data-tipo="liberado" onclick="invModalSelectTipo('liberado')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">🔓 Liberar</button>
+            <button class="inv-tipo-btn" data-tipo="transito_entrada" onclick="invModalSelectTipo('transito_entrada')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">🚢 A Tránsito</button>
+            <button class="inv-tipo-btn" data-tipo="transito_llegada" onclick="invModalSelectTipo('transito_llegada')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">🏭 Llegó a Bodega</button>
+            <button class="inv-tipo-btn" data-tipo="merma" onclick="invModalSelectTipo('merma')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">💔 Merma</button>
+            <button class="inv-tipo-btn" data-tipo="ajuste" onclick="invModalSelectTipo('ajuste')" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;cursor:pointer;background:#fff;font-size:12px;font-weight:600;color:#555;text-align:left;transition:all .15s;">⚖️ Ajuste</button>
+          </div>
+          <!-- Hidden select for compatibility with invGuardarMovimiento -->
+          <select id="inv-mov-tipo" style="display:none;">
+            <option value="entrada">entrada</option>
+            <option value="salida">salida</option>
+            <option value="apartado">apartado</option>
+            <option value="liberado">liberado</option>
+            <option value="transito_entrada">transito_entrada</option>
+            <option value="transito_llegada">transito_llegada</option>
+            <option value="merma">merma</option>
+            <option value="ajuste">ajuste</option>
+          </select>
+          <!-- Descripción del tipo seleccionado -->
+          <div id="inv-modal-tipo-desc" style="margin-top:8px;font-size:12px;color:#777;padding:8px 12px;background:#fafaf8;border-radius:6px;min-height:32px;"></div>
+        </div>
+
+        <!-- Ajuste: signo para tipo ajuste -->
+        <div id="inv-modal-ajuste-signo-row" style="display:none;grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Dirección del Ajuste</label>
+          <div style="display:flex;gap:8px;">
+            <button id="inv-modal-signo-pos" onclick="invModalSetSigno(1)" style="flex:1;padding:9px;border:1.5px solid #22c55e;border-radius:8px;background:#f0fdf4;color:#15803d;font-weight:700;cursor:pointer;font-size:13px;">+ Agregar placas</button>
+            <button id="inv-modal-signo-neg" onclick="invModalSetSigno(-1)" style="flex:1;padding:9px;border:1.5px solid #e5e7eb;border-radius:8px;background:#fff;color:#666;font-weight:700;cursor:pointer;font-size:13px;">− Quitar placas</button>
+          </div>
+        </div>
+
+        <!-- Motivo (required for ajuste/merma) -->
+        <div id="inv-modal-motivo-row" style="display:none;grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#e53e3e;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Motivo <span style="color:#e53e3e;">*</span></label>
+          <select id="inv-modal-motivo" style="width:100%;border:1.5px solid #fca5a5;border-radius:8px;padding:9px 10px;font-size:13px;background:#fff;">
+            <option value="">— Selecciona un motivo —</option>
+            <option value="Conteo físico">Conteo físico</option>
+            <option value="Corrección de error">Corrección de error</option>
+            <option value="Pieza dañada">Pieza dañada / rota</option>
+            <option value="Muestra de showroom">Muestra de showroom</option>
+            <option value="Uso interno">Uso interno (obra o instalación)</option>
+            <option value="Devolución de cliente">Devolución de cliente</option>
+            <option value="Diferencia en embarque">Diferencia en embarque</option>
+            <option value="Otro">Otro (especifica en notas)</option>
+          </select>
+        </div>
+
+        <!-- Cantidad -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Cantidad (placas) <span style="color:#e53e3e;">*</span></label>
+          <input type="number" id="inv-mov-placas" min="0.01" step="0.01" placeholder="0" oninput="invMovCalcM2(); invModalUpdateResultado();"
+            style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:15px;font-weight:600;box-sizing:border-box;">
+        </div>
+
+        <!-- M² -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">M² (calculado)</label>
+          <input type="number" id="inv-mov-m2" readonly placeholder="—"
+            style="width:100%;border:1.5px solid #e5e7eb;border-radius:8px;padding:9px 10px;font-size:13px;background:#f9f9f7;color:#888;box-sizing:border-box;">
+        </div>
+
+        <!-- Fecha -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Fecha</label>
+          <input type="date" id="inv-mov-fecha"
+            style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <!-- Referencia -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Referencia</label>
+          <input type="text" id="inv-mov-ref" placeholder="OC-2026-001, CNT-04, COT-082…"
+            style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <!-- Cliente -->
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Cliente (opcional)</label>
+          <input type="text" id="inv-mov-cliente" placeholder="Nombre del cliente"
+            style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <!-- Notas -->
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Notas adicionales</label>
+          <textarea id="inv-mov-notas" rows="2" placeholder="Observaciones, detalles del movimiento…"
+            style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:16px 24px 20px;border-top:1px solid #f0f0ee;display:flex;gap:10px;align-items:center;justify-content:space-between;">
+      <button onclick="invCloseMovPanel()" style="background:none;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;color:#666;cursor:pointer;">Cancelar</button>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div id="inv-modal-historial-toggle" style="font-size:12px;color:#888;cursor:pointer;text-decoration:underline;" onclick="invModalToggleHistorial()">Ver historial</div>
+        <button id="inv-modal-guardar-btn" onclick="invGuardarMovimiento()" style="background:#1a1a1a;color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;">
+          💾 Registrar movimiento
+        </button>
+      </div>
+    </div>
+
+    <!-- Historial colapsable -->
+    <div id="inv-modal-historial-section" style="display:none;border-top:1px solid #f0f0ee;padding:0 24px 20px;max-height:260px;overflow-y:auto;">
+      <div style="font-size:12px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.06em;padding:14px 0 8px;">Historial de movimientos</div>
+      <div id="inv-mov-historial"></div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+/* Modal de movimiento */
+#inv-modal-overlay.active { display:flex !important; }
+.inv-tipo-btn { transition: all .15s !important; }
+.inv-tipo-btn.selected {
+  border-color: #1a1a1a !important;
+  background: #1a1a1a !important;
+  color: #fff !important;
+}
+.inv-tipo-btn.selected[data-tipo="entrada"]          { border-color:#22c55e!important;background:#22c55e!important; }
+.inv-tipo-btn.selected[data-tipo="salida"]           { border-color:#ef4444!important;background:#ef4444!important; }
+.inv-tipo-btn.selected[data-tipo="apartado"]         { border-color:#f59e0b!important;background:#f59e0b!important; }
+.inv-tipo-btn.selected[data-tipo="liberado"]         { border-color:#3b82f6!important;background:#3b82f6!important; }
+.inv-tipo-btn.selected[data-tipo="transito_entrada"] { border-color:#8b5cf6!important;background:#8b5cf6!important; }
+.inv-tipo-btn.selected[data-tipo="transito_llegada"] { border-color:#0ea5e9!important;background:#0ea5e9!important; }
+.inv-tipo-btn.selected[data-tipo="merma"]            { border-color:#dc2626!important;background:#dc2626!important; }
+.inv-tipo-btn.selected[data-tipo="ajuste"]           { border-color:#6b7280!important;background:#6b7280!important; }
+#inv-modal-overlay { animation: fadeInOverlay .18s ease; }
+#inv-modal-box { animation: slideUpModal .2s ease; }
+@keyframes fadeInOverlay { from { opacity:0; } to { opacity:1; } }
+@keyframes slideUpModal  { from { opacity:0;transform:translateY(20px); } to { opacity:1;transform:translateY(0); } }
+</style>
 </body>
 </html>
