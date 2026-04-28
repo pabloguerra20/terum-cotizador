@@ -86,8 +86,8 @@
     if (error) { console.error('getCustomProducts:', error); return []; }
     return (data || []).map(p => ({
       sku: p.sku, nombre: p.nombre, categoria: p.categoria,
-      descripcion: p.formato || '', marca: 'KITO',
-      precio: p.precio_m2, custom: true
+      descripcion: p.formato || '', marca: p.marca || 'KITO',
+      precio: p.precio_m2, m2_placa: p.m2_placa || 0, custom: true
     }));
   }
   async function saveCustomProduct(prod) {
@@ -101,6 +101,32 @@
   async function deleteCustomProductFromDB(sku) {
     const { error } = await _sb.from('custom_products').delete().eq('sku', sku);
     if (error) { console.error('deleteCustomProductFromDB:', error); }
+  }
+
+  // ── Product Overrides (edits a productos estaticos KITO/TC) ──────────────────
+  async function getProductOverrides() {
+    const { data, error } = await _sb.from('product_overrides').select('*');
+    if (error) { console.error('getProductOverrides:', error); return []; }
+    return data || [];
+  }
+  async function saveProductOverride(ov) {
+    const { error } = await _sb.from('product_overrides').upsert({
+      sku: ov.sku, nombre: ov.nombre, descripcion: ov.descripcion,
+      categoria: ov.categoria, marca: ov.marca,
+      precio_m2: ov.precio_m2, m2_placa: ov.m2_placa || 0,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'sku' });
+    if (error) { console.error('saveProductOverride:', error); return false; }
+    return true;
+  }
+  async function deleteProductOverride(sku) {
+    const { error } = await _sb.from('product_overrides').delete().eq('sku', sku);
+    if (error) { console.error('deleteProductOverride:', error); }
+  }
+  async function renameProductSkuDB(oldSku, newSku) {
+    const { error } = await _sb.rpc('rename_product_sku', { old_sku: oldSku, new_sku: newSku });
+    if (error) { console.error('renameProductSkuDB:', error); return false; }
+    return true;
   }
 
   // ── Convenios ────────────────────────────────────────────────────────────────
@@ -1816,6 +1842,11 @@
             <option value="ok">Stock OK</option>
             <option value="low">Stock bajo</option>
             <option value="out">Sin stock</option>
+          </select>
+          <select id="inv-sort" onchange="invRender()" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;font-size:13px;min-width:190px;">
+            <option value="nombre_az">🔤 Nombre A → Z</option>
+            <option value="stock_desc">📦 Mayor stock primero</option>
+            <option value="stock_asc">⚠️ Menor stock primero</option>
           </select>
         </div>
         <div id="inv-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;"></div>
@@ -3814,6 +3845,40 @@ function tipoBadge(t) {
 // =====================================================================
 // HISTORIAL VIEW
 // =====================================================================
+// ── Historial filter state (persisted across re-renders) ────────────────────
+let _hfSearch = '', _hfStatus = '', _hfVend = '', _hfTipo = '';
+let _hfData   = []; // cached full history for filter-only re-renders
+
+function histApplyFilters() {
+  // Save current values to state
+  _hfSearch = document.getElementById('hf-search')?.value  || '';
+  _hfStatus = document.getElementById('hf-status')?.value  || '';
+  _hfVend   = document.getElementById('hf-vendedor')?.value || '';
+  _hfTipo   = document.getElementById('hf-tipo')?.value    || '';
+
+  const q = _hfSearch.toLowerCase();
+  let filtered = _hfData.filter(c => {
+    if (_hfStatus && (c.status || 'Pendiente') !== _hfStatus) return false;
+    if (_hfVend   && c.vendedor !== _hfVend)                   return false;
+    if (_hfTipo   && (c.tipoCliente || '') !== _hfTipo)        return false;
+    if (q && !((c.cliente||'').toLowerCase().includes(q) ||
+               (c.proyecto||'').toLowerCase().includes(q) ||
+               (c.num||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  document.getElementById('hf-count').textContent =
+    `${filtered.length} cotización${filtered.length !== 1 ? 'es' : ''}`;
+
+  const wrap = document.getElementById('hist-table-wrap');
+  if (!wrap) return;
+  if (filtered.length === 0) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:24px;"><div class="empty-icon">🔍</div>Sin resultados</div>`;
+    return;
+  }
+  _histRenderTable(filtered, wrap);
+}
+
 async function renderHistorial() {
   const h = await getHistory();
   const el = document.getElementById('histContent');
@@ -3822,14 +3887,20 @@ async function renderHistorial() {
     return;
   }
 
-  // Filter bar
-  const vendedores = [...new Set(h.map(c => c.vendedor).filter(Boolean))];
+  // Capture current filter values BEFORE rebuilding HTML (if controls exist)
+  if (document.getElementById('hf-search'))   _hfSearch = document.getElementById('hf-search').value;
+  if (document.getElementById('hf-status'))   _hfStatus = document.getElementById('hf-status').value;
+  if (document.getElementById('hf-vendedor')) _hfVend   = document.getElementById('hf-vendedor').value;
+  if (document.getElementById('hf-tipo'))     _hfTipo   = document.getElementById('hf-tipo').value;
+
+  // Build filter bar HTML
+  const vendedores = [...new Set(h.map(c => c.vendedor).filter(Boolean))].sort();
   const filterHtml = `
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
-      <input type="text" id="hf-search" placeholder="🔍 Buscar cliente, proyecto, n°..." 
+      <input type="text" id="hf-search" placeholder="🔍 Buscar cliente, proyecto, n°..."
         style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;min-width:220px;"
-        oninput="renderHistorial()">
-      <select id="hf-status" onchange="renderHistorial()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
+        oninput="histApplyFilters()">
+      <select id="hf-status" onchange="histApplyFilters()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
         <option value="">Todos los estados</option>
         <option value="Pendiente">⏳ Pendiente</option>
         <option value="Enviada">📤 Enviada</option>
@@ -3837,11 +3908,11 @@ async function renderHistorial() {
         <option value="Cerrada">✅ Cerrada</option>
         <option value="Rechazada">❌ Rechazada</option>
       </select>
-      <select id="hf-vendedor" onchange="renderHistorial()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
+      <select id="hf-vendedor" onchange="histApplyFilters()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
         <option value="">Todos los vendedores</option>
         ${vendedores.map(v=>`<option value="${v}">${v}</option>`).join('')}
       </select>
-      <select id="hf-tipo" onchange="renderHistorial()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
+      <select id="hf-tipo" onchange="histApplyFilters()" style="border:1px solid #d1d5db;border-radius:5px;padding:7px 12px;font-size:13px;">
         <option value="">Todos los tipos</option>
         ${Object.entries(TIPO_META).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('')}
       </select>
@@ -3850,30 +3921,19 @@ async function renderHistorial() {
 
   el.innerHTML = filterHtml + `<div id="hist-table-wrap"></div>`;
 
-  // Re-read filters (they exist now)
-  const q = (document.getElementById('hf-search')?.value || '').toLowerCase();
-  const fStatus = document.getElementById('hf-status')?.value || '';
-  const fVend = document.getElementById('hf-vendedor')?.value || '';
-  const fTipo = document.getElementById('hf-tipo')?.value || '';
+  // Restore filter values after DOM rebuild
+  document.getElementById('hf-search').value   = _hfSearch;
+  document.getElementById('hf-status').value   = _hfStatus;
+  document.getElementById('hf-vendedor').value = _hfVend;
+  document.getElementById('hf-tipo').value     = _hfTipo;
 
-  let filtered = h.filter(c => {
-    if (fStatus && (c.status || 'Pendiente') !== fStatus) return false;
-    if (fVend && c.vendedor !== fVend) return false;
-    if (fTipo && (c.tipoCliente || '') !== fTipo) return false;
-    if (q && !((c.cliente||'').toLowerCase().includes(q) ||
-               (c.proyecto||'').toLowerCase().includes(q) ||
-               (c.num||'').toLowerCase().includes(q))) return false;
-    return true;
-  });
+  // Cache full data and apply current filters
+  _hfData = h;
+  histApplyFilters();
+}
 
-  document.getElementById('hf-count').textContent = `${filtered.length} cotización${filtered.length!==1?'es':''}`;
-
-  if (filtered.length === 0) {
-    document.getElementById('hist-table-wrap').innerHTML = `<div class="empty-state" style="padding:24px;"><div class="empty-icon">🔍</div>Sin resultados</div>`;
-    return;
-  }
-
-  document.getElementById('hist-table-wrap').innerHTML = `
+function _histRenderTable(filtered, wrap) {
+  wrap.innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
       <thead>
         <tr style="background:#f8f9fb;">
@@ -4662,7 +4722,43 @@ let _catalogFilter = '';
 // getCustomProducts, saveCustomProduct, deleteCustomProductFromDB → async, defined in <head> via Supabase
 
 async function getAllProducts() {
-  return [...PRODUCTS, ...await getCustomProducts()];
+  const custom   = await getCustomProducts();
+  const overrides = await getProductOverrides();
+  const ovMap = Object.fromEntries(overrides.map(o => [o.sku, o]));
+
+  // Apply overrides to static products
+  const base = PRODUCTS.map(p => {
+    const ov = ovMap[p.sku];
+    if (!ov) return p;
+    return {
+      ...p,
+      nombre:      ov.nombre      ?? p.nombre,
+      descripcion: ov.descripcion ?? p.descripcion,
+      categoria:   ov.categoria   ?? p.categoria,
+      marca:       ov.marca       ?? p.marca,
+      precio:      ov.precio_m2   ?? p.precio,
+      m2_placa:    ov.m2_placa    ?? p.m2_placa ?? 0,
+      _edited: true
+    };
+  });
+
+  // Apply overrides to custom products too
+  const customWithOv = custom.map(p => {
+    const ov = ovMap[p.sku];
+    if (!ov) return p;
+    return {
+      ...p,
+      nombre:      ov.nombre      ?? p.nombre,
+      descripcion: ov.descripcion ?? p.descripcion,
+      categoria:   ov.categoria   ?? p.categoria,
+      marca:       ov.marca       ?? p.marca,
+      precio:      ov.precio_m2   ?? p.precio,
+      m2_placa:    ov.m2_placa    ?? p.m2_placa ?? 0,
+      _edited: true
+    };
+  });
+
+  return [...base, ...customWithOv];
 }
 
 async function addNewProduct() {
@@ -4748,12 +4844,14 @@ async function renderCatalog() {
     const catKey = p.categoria.split(' ')[0];
     const isCustom = p.custom ? '<span style="background:#dbeafe;color:#1e40af;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:600;margin-left:6px;">NUEVO</span>' : '';
     const deleteBtn = p.custom ? `<button class="btn btn-danger btn-sm" onclick="deleteCustomProduct('${p.sku}')" style="margin-top:6px;font-size:10px;padding:3px 8px;">Eliminar</button>` : '';
+    const editedBadge = p._edited ? '<span style="background:#fef9c3;color:#854d0e;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:600;margin-left:4px;">EDITADO</span>' : '';
+    const editBtn = `<button class="btn btn-secondary btn-sm" onclick="openEditProductModal('${p.sku}')" style="margin-top:6px;font-size:10px;padding:3px 8px;margin-right:4px;">✏️ Editar</button>`;
     return `<div class="catalog-item">
       <div>
-        <div class="ci-name">${p.nombre}${isCustom}</div>
+        <div class="ci-name">${p.nombre}${isCustom}${editedBadge}</div>
         <div class="ci-desc">${p.descripcion} · <span class="cat-badge cat-${catKey}" style="font-size:9px;">${p.categoria}</span></div>
         <div class="ci-sku">${p.sku} · ${p.marca}</div>
-        ${deleteBtn}
+        ${editBtn}${deleteBtn}
       </div>
       <div class="ci-price">${p.precio > 0 ? fmx(p.precio) : '<span style="color:#bbb;">Sin precio</span>'}</div>
     </div>`;
@@ -5952,6 +6050,7 @@ async function invRender() {
   const q     = (document.getElementById('inv-search')?.value || '').toLowerCase();
   const fCat  = document.getElementById('inv-filter-cat')?.value  || '';
   const fStat = document.getElementById('inv-filter-status')?.value || '';
+  const fSort = document.getElementById('inv-sort')?.value || 'nombre_az';
   const tbody = document.getElementById('inv-tbody');
   const empty = document.getElementById('inv-empty');
   if (!tbody) return;
@@ -5965,6 +6064,17 @@ async function invRender() {
     if (q && !((p.sku||'').toLowerCase().includes(q) || (p.nombre||'').toLowerCase().includes(q) || (p.categoria||'').toLowerCase().includes(q))) return false;
     return true;
   });
+
+  // ── Sort ─────────────────────────────────────────────────────────────
+  const dispOf2 = p => Math.max(0, (p.stock_placas||0) - (p.apartado_placas||0));
+  if (fSort === 'stock_desc') {
+    rows.sort((a, b) => dispOf2(b) - dispOf2(a));
+  } else if (fSort === 'stock_asc') {
+    rows.sort((a, b) => dispOf2(a) - dispOf2(b));
+  } else {
+    // nombre_az (default)
+    rows.sort((a, b) => (a.nombre||'').localeCompare(b.nombre||''));
+  }
 
   // ── KPIs ─────────────────────────────────────────────────────────────
   const withInv = merged.filter(p => p.enInventario);
@@ -6747,5 +6857,221 @@ function invCloseMovPanel() {
 @keyframes fadeInOverlay { from { opacity:0; } to { opacity:1; } }
 @keyframes slideUpModal  { from { opacity:0;transform:translateY(20px); } to { opacity:1;transform:translateY(0); } }
 </style>
+
+<!-- =====================================================================
+     MODAL EDICION DE PRODUCTO (catálogo)
+     ===================================================================== -->
+<div id="prod-edit-overlay" onclick="prodEditCheckClose(event)" style="
+  display:none;position:fixed;inset:0;z-index:9100;
+  background:rgba(0,0,0,0.45);backdrop-filter:blur(3px);
+  align-items:center;justify-content:center;padding:16px;
+">
+  <div id="prod-edit-box" style="
+    background:#fff;border-radius:14px;width:100%;max-width:560px;
+    box-shadow:0 24px 64px rgba(0,0,0,0.22);overflow:hidden;
+    font-family:'DM Sans',sans-serif;
+  ">
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0ee;display:flex;align-items:flex-start;justify-content:space-between;">
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#999;text-transform:uppercase;margin-bottom:4px;">Editar Producto</div>
+        <div id="prod-edit-header-name" style="font-size:17px;font-weight:700;color:#1a1a1a;"></div>
+        <div id="prod-edit-header-sku" style="font-size:12px;color:#888;margin-top:2px;"></div>
+      </div>
+      <button onclick="prodEditClose()" style="background:none;border:none;cursor:pointer;padding:4px;color:#aaa;font-size:20px;line-height:1;flex-shrink:0;">✕</button>
+    </div>
+
+    <!-- Warning for SKU rename -->
+    <div id="prod-edit-sku-warning" style="display:none;margin:16px 24px 0;padding:10px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;font-size:12px;color:#713f12;">
+      ⚠️ <strong>Cambiar el SKU actualizará en cascada:</strong> inventario, movimientos y filas en cotizaciones. Esta operación no se puede deshacer fácilmente.
+    </div>
+
+    <!-- Form -->
+    <div style="padding:20px 24px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Nombre *</label>
+          <input id="prod-edit-nombre" type="text" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:14px;font-weight:600;box-sizing:border-box;">
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Descripción / Medidas</label>
+          <input id="prod-edit-desc" type="text" placeholder="Ej: 120 X 60 X 10" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Categoría</label>
+          <select id="prod-edit-cat" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+            <option value="SINTERED STONE">SINTERED STONE</option>
+            <option value="PORCELAIN">PORCELAIN</option>
+            <option value="ESTERNI">ESTERNI</option>
+            <option value="SEMPLICE">SEMPLICE</option>
+            <option value="COMPLEMENTOS">COMPLEMENTOS</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Marca</label>
+          <input id="prod-edit-marca" type="text" placeholder="KITO, TIME CERAMICS…" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">Precio / M² (MXN)</label>
+          <input id="prod-edit-precio" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#666;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">M² por Placa</label>
+          <input id="prod-edit-m2" type="number" min="0" step="0.001" placeholder="0.000" style="width:100%;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+          <div style="font-size:10px;color:#aaa;margin-top:3px;">Usado para cálculos de inventario</div>
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="font-size:11px;font-weight:700;color:#e53e3e;display:block;margin-bottom:5px;letter-spacing:.05em;text-transform:uppercase;">SKU <span style="font-weight:400;color:#999;">(editar con cuidado — actualiza en cascada)</span></label>
+          <input id="prod-edit-sku-new" type="text" oninput="prodEditCheckSkuChange()" style="width:100%;border:1.5px solid #fca5a5;border-radius:8px;padding:9px 10px;font-size:13px;font-family:monospace;box-sizing:border-box;">
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 24px 20px;border-top:1px solid #f0f0ee;display:flex;gap:10px;align-items:center;justify-content:space-between;">
+      <button id="prod-edit-reset-btn" onclick="prodEditResetOverride()" style="background:none;border:1.5px solid #fca5a5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;color:#e53e3e;cursor:pointer;display:none;">↩ Restaurar original</button>
+      <div style="display:flex;gap:10px;margin-left:auto;">
+        <button onclick="prodEditClose()" style="background:none;border:1.5px solid #d1d5db;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:600;color:#666;cursor:pointer;">Cancelar</button>
+        <button id="prod-edit-save-btn" onclick="prodEditSave()" style="background:#1a1a1a;color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;">
+          💾 Guardar cambios
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+#prod-edit-overlay.active { display:flex !important; }
+#prod-edit-overlay { animation: fadeInOverlay .18s ease; }
+#prod-edit-box     { animation: slideUpModal .2s ease; }
+</style>
+
+<script>
+
+// =====================================================================
+// EDICION DE PRODUCTOS DEL CATALOGO
+// =====================================================================
+let _prodEditOriginalSku = null;
+let _prodEditIsCustom    = false;
+let _prodEditHasOverride = false;
+
+async function openEditProductModal(sku) {
+  const all = await getAllProducts();
+  const p   = all.find(x => x.sku === sku);
+  if (!p) return;
+
+  _prodEditOriginalSku = sku;
+  _prodEditIsCustom    = !!p.custom;
+  _prodEditHasOverride = !!p._edited;
+
+  // Populate header
+  document.getElementById('prod-edit-header-name').textContent = p.nombre;
+  document.getElementById('prod-edit-header-sku').textContent  = p.sku;
+
+  // Populate fields
+  document.getElementById('prod-edit-nombre').value  = p.nombre || '';
+  document.getElementById('prod-edit-desc').value    = p.descripcion || '';
+  document.getElementById('prod-edit-cat').value     = p.categoria || 'SINTERED STONE';
+  document.getElementById('prod-edit-marca').value   = p.marca || '';
+  document.getElementById('prod-edit-precio').value  = p.precio || '';
+  document.getElementById('prod-edit-m2').value      = p.m2_placa || '';
+  document.getElementById('prod-edit-sku-new').value = p.sku;
+
+  // Reset warnings
+  document.getElementById('prod-edit-sku-warning').style.display = 'none';
+  document.getElementById('prod-edit-reset-btn').style.display   = _prodEditHasOverride ? '' : 'none';
+
+  // Show modal
+  const overlay = document.getElementById('prod-edit-overlay');
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('prod-edit-nombre').focus(), 100);
+}
+
+function prodEditCheckSkuChange() {
+  const newSku = document.getElementById('prod-edit-sku-new').value.trim();
+  const changed = newSku !== _prodEditOriginalSku && newSku.length > 0;
+  document.getElementById('prod-edit-sku-warning').style.display = changed ? '' : 'none';
+}
+
+function prodEditCheckClose(e) {
+  if (e.target === document.getElementById('prod-edit-overlay')) prodEditClose();
+}
+
+function prodEditClose() {
+  document.getElementById('prod-edit-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+async function prodEditResetOverride() {
+  if (!confirm('¿Restaurar este producto a sus valores originales? Se eliminarán todos los cambios editados.')) return;
+  await deleteProductOverride(_prodEditOriginalSku);
+  // If custom product, nothing extra to do for overrides
+  notify('Producto restaurado a valores originales ✓', 'success');
+  prodEditClose();
+  renderCatalog();
+}
+
+async function prodEditSave() {
+  const nombre  = document.getElementById('prod-edit-nombre').value.trim().toUpperCase();
+  const desc    = document.getElementById('prod-edit-desc').value.trim();
+  const cat     = document.getElementById('prod-edit-cat').value;
+  const marca   = document.getElementById('prod-edit-marca').value.trim().toUpperCase();
+  const precio  = parseFloat(document.getElementById('prod-edit-precio').value) || 0;
+  const m2      = parseFloat(document.getElementById('prod-edit-m2').value) || 0;
+  const newSku  = document.getElementById('prod-edit-sku-new').value.trim().toUpperCase();
+  const oldSku  = _prodEditOriginalSku;
+
+  if (!nombre) { notify('El nombre es obligatorio', 'error'); return; }
+  if (!newSku)  { notify('El SKU es obligatorio', 'error'); return; }
+
+  const btn = document.getElementById('prod-edit-save-btn');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+
+  const skuChanged = newSku !== oldSku;
+
+  // 1. Si es producto custom → update custom_products
+  if (_prodEditIsCustom) {
+    if (skuChanged) {
+      // Rename in DB cascade first
+      const renameOk = await renameProductSkuDB(oldSku, newSku);
+      if (!renameOk) { notify('Error al renombrar SKU', 'error'); btn.disabled=false; btn.textContent='💾 Guardar cambios'; return; }
+    }
+    await saveCustomProduct({ sku: newSku, nombre, descripcion: desc, categoria: cat, marca, precio, m2_placa: m2 });
+  }
+
+  // 2. Siempre guardar override (aplica a estáticos y a custom por igual)
+  await saveProductOverride({ sku: newSku, nombre, descripcion: desc, categoria: cat, marca, precio_m2: precio, m2_placa: m2 });
+
+  // 3. Si el SKU cambió en producto estático → cascade via RPC
+  if (skuChanged && !_prodEditIsCustom) {
+    const renameOk = await renameProductSkuDB(oldSku, newSku);
+    if (!renameOk) { notify('Error al renombrar SKU en base de datos', 'error'); btn.disabled=false; btn.textContent='💾 Guardar cambios'; return; }
+  }
+
+  // 4. Sincronizar inventario si el SKU existe allí
+  const invData = await invLoad();
+  const inInv   = invData.find(x => x.sku === (skuChanged ? newSku : oldSku));
+  if (inInv) {
+    await _sb.from('inventario').update({
+      nombre, categoria: cat, formato: desc, m2_placa: m2, updated_at: new Date().toISOString()
+    }).eq('sku', skuChanged ? newSku : oldSku);
+  }
+
+  notify('Producto actualizado ✓' + (skuChanged ? ' (SKU renombrado en cascada)' : ''), 'success');
+  btn.disabled = false; btn.textContent = '💾 Guardar cambios';
+  prodEditClose();
+  renderCatalog();
+}
+
+</script>
 </body>
 </html>
